@@ -27,3 +27,14 @@ Contents:
 **Reference links from class ("Getting Started with LEGO Hardware"):**
 - LEGO Education Python library: https://github.com/LEGO/LEGOEducation
 - Class practice repo: https://github.com/chrisbuerginrogers/ME193-Robotics
+
+## 2026-09-10 — Restructured into single class repo, organized by day
+
+Decided to keep everything for the whole class in one repo rather than one repo per topic/day.
+
+- Renamed repo `me193-robotics-libs` → `me193-robotics` (via `gh repo rename`; local folder renamed to match, remote URL updated automatically).
+- Moved `spin_motor.py` into a new `9-10/` folder (dated folder-per-day pattern going forward), added `9-10/README.md` with day-specific usage notes.
+- Shared stuff (`venv/`, `requirements.txt`, root `README.md`, this log) stays at repo root since it applies across days.
+- Updated root `README.md` to explain the folder-per-day structure and point into `9-10/`.
+
+**Convention going forward:** new class sessions get their own `M-D/` folder (e.g. `9-17/`) with their own README; shared deps get added to the root `requirements.txt`; append a new dated entry here each session.

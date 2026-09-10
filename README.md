@@ -1,6 +1,14 @@
-# ME193 Robotics Libs
+# ME193 Robotics
 
 Python code and libraries for ME193 (AI in Mobile Robotics), controlling LEGO Education hardware via the [`legoeducation`](https://github.com/LEGO/LEGOEducation) library.
+
+Everything for the class lives in this one repo, organized by day. Shared setup (venv, dependencies) lives at the root; each day's exercise gets its own dated folder.
+
+## Structure
+
+- `9-10/` — motor spin demo (see its [README](9-10/README.md))
+- `notes/session-log.md` — running log of Claude Code session context across the semester
+- `requirements.txt` — shared dependencies for the whole repo
 
 ## Setup
 
@@ -19,10 +27,4 @@ pip install -r requirements.txt
 
 ## Usage
 
-Update `card_color` and `card_serial` in `spin_motor.py` to match your Connection Card, then:
-
-```bash
-python spin_motor.py
-```
-
-This connects to a single motor and spins it clockwise at 50% speed for 3 seconds.
+See each day's folder for its own README and instructions, e.g. [9-10/README.md](9-10/README.md).

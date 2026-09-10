@@ -1,0 +1,29 @@
+# Claude Session Log — ME193 Robotics
+
+Running log of what's been set up via Claude Code, kept because the class Claude accounts close on **Dec 10** and everything else disappears. Read this at the start of a new session to catch up; append a new dated entry each time something meaningful changes.
+
+## 2026-09-10 — Initial setup
+
+**Machine state found:**
+- Python 3.14.4 already installed via Homebrew (`/opt/homebrew/bin/python3`) — no fresh install was needed.
+- `git` 2.50.1 already installed.
+- `gh` (GitHub CLI) was NOT installed — installed via `brew install gh`, then authenticated with `gh auth login` (account: `sl-ter`).
+
+**Repo created:** [github.com/sl-ter/me193-robotics-libs](https://github.com/sl-ter/me193-robotics-libs) (private)
+
+Contents:
+- `spin_motor.py` — single-motor demo using the [`legoeducation`](https://github.com/LEGO/LEGOEducation) library (connects via a Connection Card's color + serial, spins clockwise at 50% for 3s). `card_color`/`card_serial` are placeholders — need to be updated to match the actual card in use.
+- `requirements.txt` — generated via `pip freeze` inside the venv. Key package: `legoeducation==1.1.1` (pulled in `bleak`, `pyobjc-*` for Bluetooth on macOS).
+- `README.md` — setup/usage instructions for anyone cloning the repo.
+- `.gitignore` — excludes `venv/`, `__pycache__/`, `.DS_Store`.
+- `venv/` — local virtual environment, intentionally **not** pushed to GitHub (per class instructions to not commit the venv).
+
+**Not yet done (from the class daily plan):**
+- Actually test `spin_motor.py` against real hardware with correct card color/serial.
+- GitHub practice exercise: fork `chrisbuerginrogers/ME193-Robotics`, branch, edit `main.py`, PR, captain merges.
+- Learn to create Claude skills and save them to GitHub/machine.
+- Be prepared to take over paying for the Claude account (~$25/mo) after Dec 10.
+
+**Reference links from class ("Getting Started with LEGO Hardware"):**
+- LEGO Education Python library: https://github.com/LEGO/LEGOEducation
+- Class practice repo: https://github.com/chrisbuerginrogers/ME193-Robotics

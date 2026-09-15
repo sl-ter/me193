@@ -57,3 +57,13 @@ Home directory was accumulating one loose folder per assignment at `~`. Moved ev
 - Added `pillow==12.3.0` to the root `requirements.txt` (installed into the shared root venv, then `pip freeze` regenerated the file) since this exercise has no hardware/venv of its own.
 - Updated root `README.md`'s structure list to point into `9-15/`.
 - Tested against a generated sample image — confirmed output is single-channel (`L` mode) grayscale at the same dimensions.
+
+## 2026-09-15 — Added binarize + Flask web UI to the Grayscale exercise
+
+- Pulled the conversion logic into `9-15/image_ops.py` (`to_grayscale`, `to_binary`) so the CLI scripts and web UI share one implementation instead of duplicating it.
+- Added `9-15/binarize.py` — CLI twin of `grayscale.py`, thresholds an image to pure black/white (`<name>_9-15_binarized_<threshold><ext>`, threshold arg optional, defaults to 128).
+- Added `9-15/app.py` + `9-15/templates/index.html` — a local Flask web UI: upload an image, choose grayscale or binarize with a threshold slider, preview the result inline, and download it. Saved copies go to `9-15/output/`, which is gitignored (generated, not source).
+- Considered `tkinter` for a native desktop UI first, but this Homebrew Python build isn't compiled with Tk support (`_tkinter` missing) — fixing that needs a system-level `brew install python-tk@3.14`, a bigger change than warranted here. Flask needed only a pip install into the existing venv, so went with that instead.
+- Added `Flask==3.1.3` (and its transitive deps: `blinker`, `click`, `itsdangerous`, `Jinja2`, `MarkupSafe`, `Werkzeug`) to the root `requirements.txt` via `pip freeze`.
+- Added `/9-15/output/` to `.gitignore`.
+- Verified end-to-end with Flask's test client: grayscale and binarize both return a valid result image and save to `output/`; also checked the `/download/<filename>` route rejects a `../` path-traversal attempt (404, thanks to `werkzeug.utils.secure_filename`).

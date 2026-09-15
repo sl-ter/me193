@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>9/15 — Grayscale &amp; Binarize</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+    label { display: block; margin-top: 12px; }
+    img { max-width: 100%; margin-top: 16px; border: 1px solid #ccc; }
+    .error { color: #b00020; }
+    button { margin-top: 16px; padding: 8px 16px; }
+  </style>
+</head>
+<body>
+  <h1>Grayscale &amp; Binarize</h1>
+
+  <form action="/process" method="post" enctype="multipart/form-data">
+    <label>Image file
+      <input type="file" name="image" accept="image/*" required>
+    </label>
+
+    <label>
+      <input type="radio" name="mode" value="grayscale" {% if mode != 'binarize' %}checked{% endif %}>
+      Grayscale
+    </label>
+    <label>
+      <input type="radio" name="mode" value="binarize" {% if mode == 'binarize' %}checked{% endif %}>
+      Binarize
+    </label>
+
+    <label>Threshold (binarize only): <span id="threshold-value">{{ threshold or 128 }}</span>
+      <input type="range" name="threshold" min="0" max="255" value="{{ threshold or 128 }}"
+             oninput="document.getElementById('threshold-value').textContent = this.value">
+    </label>
+
+    <button type="submit">Process</button>
+  </form>
+
+  {% if error %}
+    <p class="error">{{ error }}</p>
+  {% endif %}
+
+  {% if result_image %}
+    <h2>Result ({{ mode }})</h2>
+    <img src="data:image/png;base64,{{ result_image }}" alt="Processed image">
+    <p><a href="/download/{{ output_name }}">Download {{ output_name }}</a></p>
+  {% endif %}
+</body>
+</html>

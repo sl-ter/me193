@@ -50,3 +50,10 @@ Home directory was accumulating one loose folder per assignment at `~`. Moved ev
 - Pre-downloaded PoseRaceCar's MediaPipe pose model to `PoseRaceCar/models/` so it works without internet at race time.
 - Found and fixed a macOS camera-permission issue running `PoseRaceCar/gesture_car_control.py`: the `kitty` terminal doesn't reliably propagate camera TCC permission to child processes (known kitty limitation) — Apple's Terminal.app does. Use Terminal.app (or iTerm2) for anything touching the webcam/mic; kitty is fine for everything else.
 - `PoseRaceCar/gesture_car_control.py` has `CARD_COLOR`/`CARD_SERIAL` hardcoded (shared kit card with Luca) — intentional, not a placeholder to fix.
+
+## 2026-09-15 — Added Grayscale exercise
+
+- New `9-15/` folder (dated folder-per-day pattern) with `grayscale.py` — takes an image path on the command line, converts it to grayscale with Pillow, and saves it alongside the original tagged with today's date (`<name>_9-15_grayscale<ext>`). Added `9-15/README.md` with usage instructions.
+- Added `pillow==12.3.0` to the root `requirements.txt` (installed into the shared root venv, then `pip freeze` regenerated the file) since this exercise has no hardware/venv of its own.
+- Updated root `README.md`'s structure list to point into `9-15/`.
+- Tested against a generated sample image — confirmed output is single-channel (`L` mode) grayscale at the same dimensions.

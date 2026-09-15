@@ -2,48 +2,128 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>9/15 — Grayscale &amp; Binarize</title>
+  <title>9/15 — Binarize, Erode &amp; Dilate</title>
   <style>
-    body { font-family: sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
-    label { display: block; margin-top: 12px; }
-    img { max-width: 100%; margin-top: 16px; border: 1px solid #ccc; }
-    .error { color: #b00020; }
+    body { font-family: sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    #dropzone {
+      border: 2px dashed #999;
+      border-radius: 8px;
+      padding: 32px;
+      text-align: center;
+      color: #666;
+      cursor: pointer;
+    }
+    #dropzone.dragover { border-color: #333; color: #333; background: #f5f5f5; }
+    #controls { display: none; margin-top: 20px; }
+    #controls.visible { display: block; }
+    .slider-row { margin-top: 16px; }
+    .slider-row label { display: flex; justify-content: space-between; font-weight: bold; }
+    .slider-row input[type="range"] { width: 100%; }
+    #preview { max-width: 100%; margin-top: 20px; border: 1px solid #ccc; display: block; }
+    #status { color: #b00020; margin-top: 8px; }
     button { margin-top: 16px; padding: 8px 16px; }
   </style>
 </head>
 <body>
-  <h1>Grayscale &amp; Binarize</h1>
+  <h1>Binarize, Erode &amp; Dilate</h1>
 
-  <form action="/process" method="post" enctype="multipart/form-data">
-    <label>Image file
-      <input type="file" name="image" accept="image/*" required>
-    </label>
+  <div id="dropzone">Drop an image here, or click to choose one</div>
+  <input type="file" id="file-input" accept="image/*" hidden>
+  <p id="status"></p>
 
-    <label>
-      <input type="radio" name="mode" value="grayscale" {% if mode != 'binarize' %}checked{% endif %}>
-      Grayscale
-    </label>
-    <label>
-      <input type="radio" name="mode" value="binarize" {% if mode == 'binarize' %}checked{% endif %}>
-      Binarize
-    </label>
+  <div id="controls">
+    <div class="slider-row">
+      <label>Threshold <span id="threshold-value">128</span></label>
+      <input type="range" id="threshold" min="0" max="255" value="128">
+    </div>
+    <div class="slider-row">
+      <label>Erosion <span id="erosion-value">0</span></label>
+      <input type="range" id="erosion" min="0" max="10" value="0">
+    </div>
+    <div class="slider-row">
+      <label>Dilation <span id="dilation-value">0</span></label>
+      <input type="range" id="dilation" min="0" max="10" value="0">
+    </div>
 
-    <label>Threshold (binarize only): <span id="threshold-value">{{ threshold or 128 }}</span>
-      <input type="range" name="threshold" min="0" max="255" value="{{ threshold or 128 }}"
-             oninput="document.getElementById('threshold-value').textContent = this.value">
-    </label>
+    <img id="preview" alt="Processed preview">
 
-    <button type="submit">Process</button>
-  </form>
+    <div>
+      <button id="download-btn">Download</button>
+    </div>
+  </div>
 
-  {% if error %}
-    <p class="error">{{ error }}</p>
-  {% endif %}
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file-input');
+    const controls = document.getElementById('controls');
+    const preview = document.getElementById('preview');
+    const status = document.getElementById('status');
+    const downloadBtn = document.getElementById('download-btn');
 
-  {% if result_image %}
-    <h2>Result ({{ mode }})</h2>
-    <img src="data:image/png;base64,{{ result_image }}" alt="Processed image">
-    <p><a href="/download/{{ output_name }}">Download {{ output_name }}</a></p>
-  {% endif %}
+    const sliderIds = ['threshold', 'erosion', 'dilation'];
+    let renderTimer = null;
+
+    function currentParams() {
+      const params = {};
+      for (const id of sliderIds) {
+        params[id] = document.getElementById(id).value;
+      }
+      return new URLSearchParams(params);
+    }
+
+    function scheduleRender() {
+      clearTimeout(renderTimer);
+      renderTimer = setTimeout(() => {
+        preview.src = '/render?' + currentParams().toString() + '&_=' + Date.now();
+      }, 60);
+    }
+
+    for (const id of sliderIds) {
+      const slider = document.getElementById(id);
+      const valueLabel = document.getElementById(id + '-value');
+      slider.addEventListener('input', () => {
+        valueLabel.textContent = slider.value;
+        scheduleRender();
+      });
+    }
+
+    async function uploadFile(file) {
+      status.textContent = '';
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const response = await fetch('/upload', { method: 'POST', body: formData });
+      const data = await response.json();
+
+      if (!response.ok) {
+        status.textContent = data.error || 'Upload failed.';
+        return;
+      }
+
+      controls.classList.add('visible');
+      scheduleRender();
+    }
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) uploadFile(fileInput.files[0]);
+    });
+
+    dropzone.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (event) => {
+      event.preventDefault();
+      dropzone.classList.remove('dragover');
+      const file = event.dataTransfer.files[0];
+      if (file) uploadFile(file);
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      window.location.href = '/download?' + currentParams().toString();
+    });
+  </script>
 </body>
 </html>

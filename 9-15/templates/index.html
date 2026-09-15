@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>9/15 — Binarize, Erode &amp; Dilate</title>
+  <title>9/15 — Image Math Explorer</title>
   <style>
     body { font-family: sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
     #dropzone {
@@ -16,33 +16,59 @@
     #dropzone.dragover { border-color: #333; color: #333; background: #f5f5f5; }
     #controls { display: none; margin-top: 20px; }
     #controls.visible { display: block; }
-    .slider-row { margin-top: 16px; }
-    .slider-row label { display: flex; justify-content: space-between; font-weight: bold; }
-    .slider-row input[type="range"] { width: 100%; }
+    .row { margin-top: 16px; }
+    .row label { display: flex; justify-content: space-between; font-weight: bold; }
+    .row input[type="range"], .row select { width: 100%; box-sizing: border-box; }
+    #description { margin-top: 6px; color: #555; font-size: 0.9em; min-height: 2.4em; }
     #preview { max-width: 100%; margin-top: 20px; border: 1px solid #ccc; display: block; }
     #status { color: #b00020; margin-top: 8px; }
     button { margin-top: 16px; padding: 8px 16px; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
-  <h1>Binarize, Erode &amp; Dilate</h1>
+  <h1>Image Math Explorer</h1>
 
   <div id="dropzone">Drop an image here, or click to choose one</div>
   <input type="file" id="file-input" accept="image/*" hidden>
   <p id="status"></p>
 
   <div id="controls">
-    <div class="slider-row">
+    <div class="row">
       <label>Threshold <span id="threshold-value">128</span></label>
       <input type="range" id="threshold" min="0" max="255" value="128">
     </div>
-    <div class="slider-row">
-      <label>Erosion <span id="erosion-value">0</span></label>
-      <input type="range" id="erosion" min="0" max="10" value="0">
+
+    <div class="row">
+      <label for="operation">Operation</label>
+      <select id="operation">
+        <option value="none">None (binarized only)</option>
+        <option value="erosion">Erosion</option>
+        <option value="dilation">Dilation</option>
+        <option value="opening">Opening (erode &rarr; dilate)</option>
+        <option value="closing">Closing (dilate &rarr; erode)</option>
+        <option value="boundary">Boundary/edge extraction</option>
+        <option value="skeleton">Skeletonization / thinning</option>
+        <option value="prune">Pruning</option>
+        <option value="hit_or_miss">Hit-or-miss</option>
+      </select>
+      <p id="description"></p>
     </div>
-    <div class="slider-row">
-      <label>Dilation <span id="dilation-value">0</span></label>
-      <input type="range" id="dilation" min="0" max="10" value="0">
+
+    <div class="row" id="amount-row">
+      <label><span id="amount-label">Iterations</span> <span id="amount-value">1</span></label>
+      <input type="range" id="amount" min="0" max="20" value="1">
+    </div>
+
+    <div class="row" id="pattern-row" hidden>
+      <label for="pattern">Pattern to detect</label>
+      <select id="pattern">
+        <option value="isolated">Isolated pixel</option>
+        <option value="corner-top-left">Corner (top-left)</option>
+        <option value="corner-top-right">Corner (top-right)</option>
+        <option value="corner-bottom-right">Corner (bottom-right)</option>
+        <option value="corner-bottom-left">Corner (bottom-left)</option>
+      </select>
     </div>
 
     <img id="preview" alt="Processed preview">
@@ -60,15 +86,65 @@
     const status = document.getElementById('status');
     const downloadBtn = document.getElementById('download-btn');
 
-    const sliderIds = ['threshold', 'erosion', 'dilation'];
+    const thresholdSlider = document.getElementById('threshold');
+    const thresholdValue = document.getElementById('threshold-value');
+    const operationSelect = document.getElementById('operation');
+    const amountRow = document.getElementById('amount-row');
+    const amountSlider = document.getElementById('amount');
+    const amountLabel = document.getElementById('amount-label');
+    const amountValue = document.getElementById('amount-value');
+    const patternRow = document.getElementById('pattern-row');
+    const patternSelect = document.getElementById('pattern');
+    const description = document.getElementById('description');
+
+    const OPERATIONS = {
+      none: {
+        needsAmount: false, needsPattern: false,
+        description: 'Binarized image only (no morphological operation).',
+      },
+      erosion: {
+        needsAmount: true, needsPattern: false, amountLabel: 'Iterations',
+        description: 'Shrinks foreground regions; removes small bright noise; breaks thin connections.',
+      },
+      dilation: {
+        needsAmount: true, needsPattern: false, amountLabel: 'Iterations',
+        description: 'Grows foreground regions; fills small gaps/holes; connects nearby components.',
+      },
+      opening: {
+        needsAmount: true, needsPattern: false, amountLabel: 'Iterations',
+        description: 'Erode → dilate. Removes small objects/specks while preserving larger shapes.',
+      },
+      closing: {
+        needsAmount: true, needsPattern: false, amountLabel: 'Iterations',
+        description: 'Dilate → erode. Fills small holes and gaps; smooths boundaries.',
+      },
+      boundary: {
+        needsAmount: true, needsPattern: false, amountLabel: 'Boundary thickness',
+        description: 'Boundary = A − erosion(A).',
+      },
+      skeleton: {
+        needsAmount: false, needsPattern: false,
+        description: 'Reduces shapes to 1-pixel-wide centerlines (keeps topology).',
+      },
+      prune: {
+        needsAmount: true, needsPattern: false, amountLabel: 'Prune length',
+        description: 'Cleans up spurs/short branches after thinning/skeletonization.',
+      },
+      hit_or_miss: {
+        needsAmount: false, needsPattern: true,
+        description: 'Detects a specific binary pattern (shape/template) using two structuring elements.',
+      },
+    };
+
     let renderTimer = null;
 
     function currentParams() {
-      const params = {};
-      for (const id of sliderIds) {
-        params[id] = document.getElementById(id).value;
-      }
-      return new URLSearchParams(params);
+      return new URLSearchParams({
+        threshold: thresholdSlider.value,
+        operation: operationSelect.value,
+        amount: amountSlider.value,
+        pattern: patternSelect.value,
+      });
     }
 
     function scheduleRender() {
@@ -78,14 +154,27 @@
       }, 60);
     }
 
-    for (const id of sliderIds) {
-      const slider = document.getElementById(id);
-      const valueLabel = document.getElementById(id + '-value');
-      slider.addEventListener('input', () => {
-        valueLabel.textContent = slider.value;
-        scheduleRender();
-      });
+    function updateOperationControls() {
+      const config = OPERATIONS[operationSelect.value];
+      amountRow.hidden = !config.needsAmount;
+      patternRow.hidden = !config.needsPattern;
+      if (config.needsAmount) amountLabel.textContent = config.amountLabel;
+      description.textContent = config.description;
     }
+
+    thresholdSlider.addEventListener('input', () => {
+      thresholdValue.textContent = thresholdSlider.value;
+      scheduleRender();
+    });
+    amountSlider.addEventListener('input', () => {
+      amountValue.textContent = amountSlider.value;
+      scheduleRender();
+    });
+    operationSelect.addEventListener('change', () => {
+      updateOperationControls();
+      scheduleRender();
+    });
+    patternSelect.addEventListener('change', scheduleRender);
 
     async function uploadFile(file) {
       status.textContent = '';
@@ -101,6 +190,7 @@
       }
 
       controls.classList.add('visible');
+      updateOperationControls();
       scheduleRender();
     }
 

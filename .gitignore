@@ -3,9 +3,6 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# Generated output images from the 9-15 grayscale/binarize UI
-/9-15/output/
-
 # PoseRaceCar is its own git repo (separate GitHub remote, shared with partner)
 # nested here just for local folder organization -- not tracked by this repo.
 /PoseRaceCar/

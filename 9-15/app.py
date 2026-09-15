@@ -5,11 +5,9 @@ from flask import Flask, Response, jsonify, render_template, request, send_file
 from PIL import Image
 from werkzeug.utils import secure_filename
 
-from image_ops import dilate, erode, to_binary
+from image_ops import apply_operation, array_to_image, to_binary_array
 
 app = Flask(__name__)
-
-OUTPUT_DIR = Path(__file__).parent / "output"
 
 # Keep processing snappy even on large photos, since sliders re-render on every move
 MAX_DIM = 1000
@@ -20,18 +18,18 @@ current_image: Image.Image | None = None
 current_stem = "image"
 
 
-def render_pipeline(threshold: int, erosion: int, dilation: int) -> Image.Image:
-    result = to_binary(current_image, threshold)
-    result = erode(result, erosion)
-    result = dilate(result, dilation)
-    return result
-
-
-def params_from_request() -> tuple[int, int, int]:
+def params_from_request() -> tuple[int, str, int, str]:
     threshold = request.args.get("threshold", 128, type=int)
-    erosion = request.args.get("erosion", 0, type=int)
-    dilation = request.args.get("dilation", 0, type=int)
-    return threshold, erosion, dilation
+    operation = request.args.get("operation", "none")
+    amount = request.args.get("amount", 1, type=int)
+    pattern = request.args.get("pattern", "isolated")
+    return threshold, operation, amount, pattern
+
+
+def render_pipeline(threshold: int, operation: str, amount: int, pattern: str) -> Image.Image:
+    binary = to_binary_array(current_image, threshold)
+    result = apply_operation(binary, operation, amount, pattern)
+    return array_to_image(result)
 
 
 @app.route("/")
@@ -60,8 +58,7 @@ def render():
     if current_image is None:
         return "", 404
 
-    threshold, erosion, dilation = params_from_request()
-    result = render_pipeline(threshold, erosion, dilation)
+    result = render_pipeline(*params_from_request())
 
     buffer = io.BytesIO()
     result.save(buffer, format="PNG")
@@ -75,17 +72,17 @@ def download():
     if current_image is None:
         return "", 404
 
-    threshold, erosion, dilation = params_from_request()
-    result = render_pipeline(threshold, erosion, dilation)
+    threshold, operation, amount, pattern = params_from_request()
+    result = render_pipeline(threshold, operation, amount, pattern)
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    buffer = io.BytesIO()
+    result.save(buffer, format="PNG")
+    buffer.seek(0)
+
     filename = secure_filename(
-        f"{current_stem}_9-15_threshold-{threshold}_erode-{erosion}_dilate-{dilation}.png"
+        f"{current_stem}_9-15_{operation}_threshold-{threshold}_amount-{amount}.png"
     )
-    output_path = OUTPUT_DIR / filename
-    result.save(output_path)
-
-    return send_file(output_path, as_attachment=True)
+    return send_file(buffer, mimetype="image/png", as_attachment=True, download_name=filename)
 
 
 if __name__ == "__main__":

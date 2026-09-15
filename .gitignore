@@ -2,3 +2,7 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store
+
+# PoseRaceCar is its own git repo (separate GitHub remote, shared with partner)
+# nested here just for local folder organization -- not tracked by this repo.
+/PoseRaceCar/

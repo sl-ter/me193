@@ -15,6 +15,7 @@ MarkupSafe==3.0.3
 matplotlib==3.11.2
 networkx==3.6.1
 numpy==2.5.3
+opencv-contrib-python==5.0.0.93
 packaging==26.3
 pillow==12.3.0
 pyobjc-core==12.2.2

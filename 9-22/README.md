@@ -1,91 +1,113 @@
 # 9/22 — AprilTag centering
 
 The car drives back and forth on a track parallel to the laptop screen, with
-an AprilTag taped to a tower on it. This watches the webcam, finds the tag,
-draws a red outline + centroid on the live feed, and drives the car so it
-always comes to rest in the horizontal middle of the frame.
+an AprilTag taped to a tower on it. `apriltag_center.py` watches the webcam,
+finds the tag, draws a red outline + centroid coordinates on the live feed,
+and drives a Double Motor so the car always comes to rest in the horizontal
+middle of the frame.
 
-- `generate_tag.py` — generates a printable AprilTag (36h11 family, id 0 by
-  default) as a PNG with a white quiet-zone border. `tag_0.png` in this
-  folder is the one actually printed and taped to the tower.
-- `track_and_drive.py` — the live loop: detects the tag with OpenCV's
-  `cv2.aruco` AprilTag detector, draws the red outline and centroid
-  coordinates, and drives a Double Motor to center it.
+## Files
+
+- `generate_apriltag.py` — generates a printable AprilTag (36h11 family) as
+  a PNG with a white quiet-zone border. `apriltag.png` in this folder (id
+  0, 10cm) is the one to print and tape to the tower.
+- `apriltag_center.py` — the main task: stationary webcam watches the car,
+  centers it.
+- `apriltag_center_mobile.py` — bonus variant for later: same centering
+  logic, but for when the camera rides on the car facing sideways (a phone
+  streamed over WiFi via an IP-camera app, e.g. iVCam/EpocCam) instead of a
+  stationary webcam watching the car. **Not yet run** — iVCam isn't set up
+  on this machine yet; once it is, point `--stream` at the phone's stream
+  URL.
 - `lelib.py` — shared LEGO Education wrapper (same file as `9-17/`, copied
   in per this repo's per-folder convention).
 
-New dependency: `opencv-contrib-python` (added to the root
-`requirements.txt`) — plain `opencv-python` doesn't include the `aruco`
-module's AprilTag dictionaries, `-contrib` does.
+Dependencies: same as `9-17/` (`legoeducation`, `opencv-contrib-python`,
+`numpy`) — already in the root `requirements.txt`, nothing new needed here.
 
 ## Before running
 
-`CARD_COLOR`/`CARD_SERIAL` at the top of `track_and_drive.py` are set to
-this kit's Connection Card (orange, `0994`), same as `9-10/` and `9-17/`.
-
-Print `tag_0.png` flat, as large as the tower will hold without wobbling,
-and tape it to face the camera as the car drives past.
+Print `apriltag.png` at **100% scale** (not "fit to page"), tape it flat to
+a tower on the car so it faces the camera. `apriltag_center.py` connects to
+the first advertising Double Motor it finds — no Connection Card needed
+(unlike `9-10/`/`9-17/`).
 
 ## Run it
 
 ```bash
-python 9-22/generate_tag.py      # only needed once, to (re)print the tag
-python 9-22/track_and_drive.py
+python 9-22/apriltag_center.py                # drive the real Double Motor
+python 9-22/apriltag_center.py --simulate      # no hardware needed, just
+                                                # prints the commands it
+                                                # would send
+python 9-22/apriltag_center.py --camera 1      # pick a different webcam
 ```
 
-Press `q` in the video window to quit (this also stops the motor).
+Press `q` or Esc in the video window to quit (also stops the motors).
+
+If it drives the *wrong* direction (chases the error instead of correcting
+it), flip `DIRECTION_SIGN` at the top of the file. If one wheel spins
+backward relative to the other (car spins in place instead of translating),
+flip `INVERT_LEFT_MOTOR`/`INVERT_RIGHT_MOTOR`.
 
 ## How it works / questions
 
-**Describe the controller (policy) — how is it determining the motor speed?**
+### 1. Describe the controller (policy) — how is it determining motor speed?
 
-Every camera frame:
+A **P/PD (proportional/proportional-derivative) feedback controller**, the
+same structure as `9-17/pd_tracker.py`'s position tracker, just swapping in
+a vision-based error signal instead of a motor-position error:
 
 ```
-error  = frame_center_x - tag_centroid_x      (pixels)
-speed  = Kp * error - Kd * d(error)/dt
+error = tag_centroid_x - frame_center_x
+speed = KP * error + KD * d(error)/dt
 ```
 
-`speed` (clamped to ±100%, in percent) is the only thing commanded — there's
-no separate "drive to position" call, and no explicit "measure distance,
-then pick a speed" step. This already gives the "faster when far, slower
-when close" behavior asked for as a stretch goal for free: `error` is
-literally how far off-center (in pixels) the tag is, so a proportional
-controller's speed naturally scales down as the tag approaches the middle
-of the frame and hits zero right at center. The sign of `error` also picks
-the direction — tag left of center drives one way, tag right of center
-drives the other.
+- **P term (`KP * error`)** — the further the tag is from center, the
+  faster the car drives toward center. This gives the assignment's "drive
+  faster if far, slower if close" bonus for free: speed scales directly
+  with how off-center the tag is, and eases toward zero as it approaches
+  the middle.
+- **D term (`KD * d(error)/dt`)** — reacts to how fast the error is
+  already shrinking or growing, damping the response so it doesn't fly
+  past center and oscillate forever.
+- A small **deadzone** (`DEADZONE_PX`) treats "close enough to center" as
+  fully stopped, so the car doesn't jitter back and forth by a pixel or
+  two forever trying to hit exactly zero error.
 
-**What does your code do if no tag is detected?**
+### 2. What does your code do if no tag is detected?
 
-`dm.stop()` — motor speed goes to zero immediately, no coasting toward a
-guess. It also resets the derivative state (`prev_error = None`) so that
-when the tag is reacquired, the code doesn't compute a derivative spike
-from the gap in time where there was no reading (a real jump in `error`
-across a dropped-frame gap isn't the car's actual rate of motion, so
-treating it as one would produce a bogus kick in the speed command). A "NO
-TAG DETECTED" banner is drawn on the video feed at the same time.
+Short dropouts (a single missed frame) are ignored — the car keeps doing
+whatever it was last commanded, since flickery misses are normal. But if
+the tag hasn't been seen for longer than `NO_TAG_TIMEOUT` (default 0.5s),
+the car **fails safe and stops both motors**, and the on-screen overlay
+switches to a red "No tag detected" banner. The derivative term's memory
+(`prev_error`) is also cleared while the tag is missing, so if it
+reappears the D term doesn't spike from comparing against a stale,
+long-ago error.
 
-**Can you make it overshoot the center spot and come back (spring loaded)?**
+### 3. Can you make it overshoot the center spot and come back (spring-loaded)?
 
-Yes — that's what the `Kd` term is for. Physically, `Kp` acts like a spring
-constant pulling the car toward center, and `Kd` acts like a damper
-resisting how fast it's approaching. With `SPRING_LOADED = True` (the
-default here), `Kd = 0`: nothing opposes the car's own momentum, so it
-overshoots center and swings back, oscillating a bit before friction
-settles it — an underdamped spring. Setting `SPRING_LOADED = False` raises
-`Kd`, which damps that motion out so the car eases into center without
-overshoot instead (overdamped/critically damped).
+Yes — set `KD = 0` (or small relative to `KP`) in `apriltag_center.py`.
+With no damping term, the car drives at full commanded speed toward center
+right up until the error crosses zero. By the time the camera sees the new
+frame, detection runs, and the command reaches the motor, the car has
+already coasted slightly past center — so it corrects back the other way,
+overshoots again by a smaller amount, and settles into a decaying
+oscillation. That lag chain (camera frame time + detection time + BLE
+round-trip + the motor's own spin-up/down time) is exactly what a real
+spring-mass-damper system's inertia does, which is why an undamped P
+controller "rings" like a spring here. Raising `KD` adds damping and calms
+the bounce back down.
 
 ## Caveats
 
-Tested end-to-end for tag detection, outline drawing, and centroid math
-against a synthetic frame (a `tag_0.png` pasted at a known offset into a
-blank frame) — confirmed the detector finds it and the computed centroid
-matches the known placement to sub-pixel accuracy. The motor-driving half
-(`dm.connect()`/`dm.run()`/`dm.stop()`) wasn't tested against real
-hardware this session — same caveat as `9-17/`. `KP`/`DEAD_ZONE_PX`/
-`DRIVE_SIGN` are starting guesses and will likely need tuning once run
-against the actual car, track distance, and camera. In particular, if the
-car drives *away* from center instead of toward it, flip `DRIVE_SIGN` to
-`-1`.
+Tag detection and centroid math were verified against a synthetic frame
+(the generated `apriltag.png` pasted into a blank frame at a known pixel
+offset, run through the real detection code path) — confirmed sub-pixel
+accurate. Unlike `9-17/`'s untested motor half, **the motor-driving side
+of `apriltag_center.py` has already been run against the real Double Motor
+and car** — video/photo evidence from that run exists locally (not pushed
+to this repo, kept off GitHub to avoid bloating it with ~60MB of media)
+showing the car driving back and forth and settling in frame center.
+`apriltag_center_mobile.py`'s sideways-camera/iVCam path hasn't been tried
+yet since iVCam isn't set up on this machine.

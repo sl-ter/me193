@@ -23,7 +23,7 @@ against the public `test.mosquitto.org` broker on the class topic `ME193`.
 ```bash
 cd ~/Code/Projects/me193
 source venv/bin/activate
-cd 9-22-mqtt
+cd MQTTIntro
 python mqtt_test.py           # round-trip sanity check
 python listen.py              # leave running to catch live messages (Ctrl+C to stop)
 python send.py "some message" # in a second terminal, to send something

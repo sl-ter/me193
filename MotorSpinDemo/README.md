@@ -18,5 +18,5 @@ card_serial = '3683'
 From the repo root, with the venv active (see root [README](../README.md)):
 
 ```bash
-python 9-10/spin_motor.py
+python MotorSpinDemo/spin_motor.py
 ```

@@ -19,7 +19,7 @@ CARD_SERIAL = '0994'
 From the repo root, with the venv active (see root [README](../README.md)):
 
 ```bash
-python 9-17/pd_tracker.py
+python PDPositionTracker/pd_tracker.py
 ```
 
 ## How it works

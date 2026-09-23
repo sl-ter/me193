@@ -27,10 +27,10 @@ From the repo root, with the venv active (see root [README](../README.md)):
 
 ```bash
 # CLI
-python 9-15/grayscale.py path/to/image.jpg
-python 9-15/binarize.py path/to/image.jpg 100   # threshold optional, defaults to 128
+python ImageMathExplorer/grayscale.py path/to/image.jpg
+python ImageMathExplorer/binarize.py path/to/image.jpg 100   # threshold optional, defaults to 128
 
 # Web UI
-python 9-15/app.py
+python ImageMathExplorer/app.py
 # then open http://127.0.0.1:5000, drop in an image, pick an operation, and drag the sliders
 ```

@@ -19,27 +19,28 @@ middle of the frame.
   stationary webcam watching the car. **Not yet run** — iVCam isn't set up
   on this machine yet; once it is, point `--stream` at the phone's stream
   URL.
-- `lelib.py` — shared LEGO Education wrapper (same file as `9-17/`, copied
-  in per this repo's per-folder convention).
+- `lelib.py` — shared LEGO Education wrapper (same file as
+  `PDPositionTracker/`, copied in per this repo's per-folder convention).
 
-Dependencies: same as `9-17/` (`legoeducation`, `opencv-contrib-python`,
-`numpy`) — already in the root `requirements.txt`, nothing new needed here.
+Dependencies: same as `PDPositionTracker/` (`legoeducation`,
+`opencv-contrib-python`, `numpy`) — already in the root `requirements.txt`,
+nothing new needed here.
 
 ## Before running
 
 Print `apriltag.png` at **100% scale** (not "fit to page"), tape it flat to
 a tower on the car so it faces the camera. `apriltag_center.py` connects to
 the first advertising Double Motor it finds — no Connection Card needed
-(unlike `9-10/`/`9-17/`).
+(unlike `MotorSpinDemo/`/`PDPositionTracker/`).
 
 ## Run it
 
 ```bash
-python 9-22/apriltag_center.py                # drive the real Double Motor
-python 9-22/apriltag_center.py --simulate      # no hardware needed, just
-                                                # prints the commands it
-                                                # would send
-python 9-22/apriltag_center.py --camera 1      # pick a different webcam
+python AprilTagCentering/apriltag_center.py                # drive the real Double Motor
+python AprilTagCentering/apriltag_center.py --simulate      # no hardware needed,
+                                                             # just prints the
+                                                             # commands it would send
+python AprilTagCentering/apriltag_center.py --camera 1      # pick a different webcam
 ```
 
 Press `q` or Esc in the video window to quit (also stops the motors).

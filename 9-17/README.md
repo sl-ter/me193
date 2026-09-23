@@ -1,4 +1,4 @@
-# 9/17 — PD Position Tracker
+# PD Position Tracker — 9/17
 
 Live PD-control demo, pulled from the class repo ([`chrisbuerginrogers/ME193-Robotics`, `Public stuff/Controls/`](https://github.com/chrisbuerginrogers/ME193-Robotics/tree/main/Public%20stuff/Controls)): a Single Motor acts as a hand-turned dial (the target), and one side of a Double Motor drives itself to match that dial's angle. Two on-screen sliders — Kp and Kd — let you change the controller's gains while it's running, so you can watch the effect on rise time, overshoot, and oscillation live on the plot.
 

@@ -1,4 +1,4 @@
-# 9/15 — Image Math Explorer
+# Image Math Explorer — 9/15
 
 Image processing exercise: convert an image to grayscale/binary, then explore binary morphology ("image math") interactively.
 

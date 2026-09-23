@@ -1,4 +1,4 @@
-# 9/10 — Motor Spin Demo
+# Motor Spin Demo — 9/10
 
 First LEGO Education hardware exercise: connect to a single motor and spin it.
 

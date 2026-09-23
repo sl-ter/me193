@@ -10,6 +10,7 @@ Everything for the class lives in this one repo (`~/Code/Projects/me193`), organ
 - `9-15/` — grayscale image conversion exercise (see its [README](9-15/README.md))
 - `9-17/` — PD position tracker, pulled from the class repo (see its [README](9-17/README.md))
 - `9-22/` — AprilTag centering: car drives back and forth, stops centered on the webcam feed (see its [README](9-22/README.md))
+- `9-22-mqtt/` — MQTT intro: publish/subscribe against the public `test.mosquitto.org` broker on the class topic `ME193` (see its [README](9-22-mqtt/README.md))
 - `PoseRaceCar/` — pose-gesture race car assignment. **Its own separate git repo** (shared with a partner, remote `Lucalo44/PoseRaceCar`), just nested here for local folder organization — it's gitignored by this repo, not tracked as part of it. It has its own venv; don't confuse it with the root one below.
 - `notes/session-log.md` — running log of Claude Code session context across the semester
 - `requirements.txt` — shared dependencies for the assignments at this repo's root (not for `PoseRaceCar/`, which has its own)

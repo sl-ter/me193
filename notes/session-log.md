@@ -154,3 +154,8 @@ Two related conventions changed at Sam's request: headings now read `Subject —
 - `GithubPractice/Public stuff/ColorActions/color_actions.py` now also connects a Single Motor, on the same red/1129 card (`SINGLE_MOTOR_CARD_*`). White no longer honks. It now starts the single motor spinning continuously (`sm.run(SPIN_SPEED)`, default 50, negative reverses) and sets the hub light to breathing white. Only Red stops it; every other color leaves it spinning. Red stops the drive motors and the single motor. Ctrl+C / exit also stops it.
 - `DoRed`/`DoWhite` and `handle_color` now take `(dm, sm)`; the other handlers still take just `dm`. README table updated.
 - Dry-run checked with fake motors against the real signatures. **Not yet run on hardware.** Pushed to `origin/sam`.
+
+## Expanded GithubPractice ColorActions README — 2026-09-24
+
+- Rewrote `GithubPractice/Public stuff/ColorActions/README.md`. It now has a full behaviour table (action, light and sound per color), notes on how the triggers work, the hardware list with the red/1129 card, step-by-step run instructions (clone, `git checkout sam`, venv, run, Ctrl+C) and the tunable constants. Pushed to `origin/sam`.
+- On GitHub it's at `spadil01/ME193-Robotics` → branch `sam` → `Public stuff/ColorActions/`, and it renders below the file list.

@@ -7,5 +7,9 @@ __pycache__/
 # nested here just for local folder organization -- not tracked by this repo.
 /PoseRaceCar/
 
+# GithubPractice is a clone of the class repo (spadil01/ME193-Robotics, branch
+# `sam`) nested here for local folder organization -- not tracked by this repo.
+/GithubPractice/
+
 # SpectrogramClassifier --save output (user recordings, not source)
 /SpectrogramClassifier/recordings/

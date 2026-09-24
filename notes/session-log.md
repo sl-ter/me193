@@ -148,3 +148,9 @@ Two related conventions changed at Sam's request: headings now read `Subject —
 - No new deps (`legoeducation` is already in the root venv). Checked with a fake motor that validates every call against the real `legoeducation` signatures; trigger logic tested on a noisy sequence. **Not yet run on hardware.**
 - Committed and pushed to `origin/sam`.
 - Card set: both devices connect with the red connection card, serial `1129` (`COLOR_SENSOR_CARD_*` and `DOUBLE_MOTOR_CARD_*` in `color_actions.py`). The first push was rejected because Sam had merged upstream into `sam` from the GitHub UI (Chris's `beep()` helper in `main.py`), so the commit was rebased on top of that and pushed. Pull before committing in `GithubPractice/`.
+
+## Single motor spin on White in GithubPractice color actions — 2026-09-24
+
+- `GithubPractice/Public stuff/ColorActions/color_actions.py` now also connects a Single Motor, on the same red/1129 card (`SINGLE_MOTOR_CARD_*`). White no longer honks. It now starts the single motor spinning continuously (`sm.run(SPIN_SPEED)`, default 50, negative reverses) and sets the hub light to breathing white. Only Red stops it; every other color leaves it spinning. Red stops the drive motors and the single motor. Ctrl+C / exit also stops it.
+- `DoRed`/`DoWhite` and `handle_color` now take `(dm, sm)`; the other handlers still take just `dm`. README table updated.
+- Dry-run checked with fake motors against the real signatures. **Not yet run on hardware.** Pushed to `origin/sam`.

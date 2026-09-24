@@ -140,22 +140,7 @@ Two related conventions changed at Sam's request: headings now read `Subject —
 - `--save` writes to `SpectrogramClassifier/recordings/`, which is gitignored. By default nothing is saved to disk, matching the earlier preference against auto-saving.
 - Verified on a synthesized clip with 5 harmonics per tone plus noise (C4, E4, G4 melody → C-major chord → A2 detuned +17 cents). All notes and the three chord notes were found correctly, and the detune read as +16 cents. Also ran a real 1 s mic recording from the VS Code terminal: capture worked, and a quiet room correctly gave no notes. **Not yet tested against a real instrument.**
 
-## Added GithubPractice (class repo clone + color actions) — 2026-09-24
+## Removed GithubPractice exercise — 2026-09-24
 
-- Cloned `spadil01/ME193-Robotics` (Sam's invited repo; fork of `chrisbuerginrogers/ME193-Robotics`, which `gh` added as `upstream`) to `GithubPractice/`. It's its own git repo, nested and gitignored like `PoseRaceCar/`. It was first cloned to `~/ME193-Robotics` by mistake, then moved here.
-- Working branch is the **existing `sam`** branch on that remote. A local `Sam` branch was created by mistake and deleted. Don't create `Sam`: a branch name that differs only in case from `sam` breaks git on macOS.
-- Added `Public stuff/ColorActions/` there, because that repo's `.gitignore` tracks only `Public stuff/**`. It contains `color_actions.py`, a copy of `lelib.py`, and a README. It builds on the `Do...()` / `match` template in `Public stuff/useful libraries/main.py`. The script connects a Color Sensor and a Double Motor, drops main.py's controller, and maps colors to actions: green forward, red stop + beep, yellow back up, blue/orange turn 90°, purple spin, magenta dance, azure zig-zag, white honk; teal is unused. The hub light matches the detected color. Actions fire once per color change, after 3 identical reads in a row (`ColorTrigger`), so holding a color doesn't repeat the action.
-- No new deps (`legoeducation` is already in the root venv). Checked with a fake motor that validates every call against the real `legoeducation` signatures; trigger logic tested on a noisy sequence. **Not yet run on hardware.**
-- Committed and pushed to `origin/sam`.
-- Card set: both devices connect with the red connection card, serial `1129` (`COLOR_SENSOR_CARD_*` and `DOUBLE_MOTOR_CARD_*` in `color_actions.py`). The first push was rejected because Sam had merged upstream into `sam` from the GitHub UI (Chris's `beep()` helper in `main.py`), so the commit was rebased on top of that and pushed. Pull before committing in `GithubPractice/`.
-
-## Single motor spin on White in GithubPractice color actions — 2026-09-24
-
-- `GithubPractice/Public stuff/ColorActions/color_actions.py` now also connects a Single Motor, on the same red/1129 card (`SINGLE_MOTOR_CARD_*`). White no longer honks. It now starts the single motor spinning continuously (`sm.run(SPIN_SPEED)`, default 50, negative reverses) and sets the hub light to breathing white. Only Red stops it; every other color leaves it spinning. Red stops the drive motors and the single motor. Ctrl+C / exit also stops it.
-- `DoRed`/`DoWhite` and `handle_color` now take `(dm, sm)`; the other handlers still take just `dm`. README table updated.
-- Dry-run checked with fake motors against the real signatures. **Not yet run on hardware.** Pushed to `origin/sam`.
-
-## Expanded GithubPractice ColorActions README — 2026-09-24
-
-- Rewrote `GithubPractice/Public stuff/ColorActions/README.md`. It now has a full behaviour table (action, light and sound per color), notes on how the triggers work, the hardware list with the red/1129 card, step-by-step run instructions (clone, `git checkout sam`, venv, run, Ctrl+C) and the tunable constants. Pushed to `origin/sam`.
-- On GitHub it's at `spadil01/ME193-Robotics` → branch `sam` → `Public stuff/ColorActions/`, and it renders below the file list.
+- Short in-class GitHub exercise, now finished and removed. It cloned the invited repo `spadil01/ME193-Robotics` into `GithubPractice/` (nested and gitignored, like `PoseRaceCar/`) and added `Public stuff/ColorActions/color_actions.py` on the existing `sam` branch. That script mapped Color Sensor colors to Double Motor / Single Motor actions. The branch was due to be deleted, and by cleanup time the repo itself returned "not found", so the local clone and every reference to it here (`.gitignore`, README) were removed. No copy of that code remains.
+- Hardware notes worth keeping: the team's connection card is **red, serial 1129**. In a scan, the Double Motor showed on red 1129, a red Single Motor showed on 1131, and the Color Sensor didn't advertise any card (it needed linking to 1129). Other teams' devices were in range, so connect by card filter. Sergio's branch was handling controller actions.

@@ -71,9 +71,9 @@ whistles on World Cup day should run `live_plot.py` first and re-fit
 |---|---|---|
 | `start` on `START_TOPIC` | starts driving | starts driving |
 | light sensor ≥ threshold | stops, publishes `Ball stopped` to `BALL_TOPIC`, opens stopped (death) song | — |
-| goal whistle | stops, publishes `Goal!` to `BALL_TOPIC`, opens goal song | — |
+| goal whistle | stops, publishes `Goal` to `BALL_TOPIC`, opens goal song | — |
 | `GOALIE_TRIGGER_MESSAGE` on `GOALIE_TOPIC` | — | stops, opens success song |
-| `GOALIE_LOSS_MESSAGE` on `GOALIE_LOSS_TOPIC` (default: `Goal!` on `BALL_TOPIC`) | — | stops, opens loss song |
+| `GOALIE_LOSS_MESSAGE` on `GOALIE_LOSS_TOPIC` (default: `Goal` on `BALL_TOPIC`) | — | stops, opens loss song |
 
 The goalie's loss song (`GOALIE_LOSS_SONG_URL`) reuses the ball's death
 song until a different one is picked. By default the goalie's loss trigger

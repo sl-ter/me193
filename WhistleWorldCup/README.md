@@ -27,6 +27,11 @@ here, adapted to this repo's layout.
   command → motor.
 - `spectogram.py` — earlier record-and-plot spectrogram tool;
   `live_plot.py` reuses its `frequency_to_note`.
+- `list_audio_devices.py` — prints every mic PyAudio can see with its
+  index, for `INPUT_DEVICE_INDEX` in `config.py`. `None` (the setting
+  here) uses the system default mic. Indexes differ per machine: the
+  partner's config uses `0`, but on this Mac `0` is "Background Music" (a
+  loopback device), so it's left at `None`.
 - `manual_gate_check.py` — throwaway check that a real `start` message
   unblocks the plot (no motor).
 - `send.py` — publishes one message and exits. Defaults to `start` on
@@ -49,8 +54,8 @@ already there. Uses the shared root venv.
 | Pitch | Command |
 |---|---|
 | silence / out of band / gaps between bands | stop |
-| 650–784 Hz | backward |
-| 799–933 Hz | forward (speed ramps 25 → 70% over 5 s held) |
+| 650–784 Hz | forward (speed ramps 25 → 70% over 5 s held) |
+| 799–933 Hz | backward (same ramp) |
 | 948–1100 Hz | left (fixed 30%) |
 | 1115–1230 Hz | right (fixed 30%) |
 | 1300–2000 Hz | **goal** (ball role: ends the run as a goal) |

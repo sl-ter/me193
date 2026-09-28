@@ -29,6 +29,11 @@ here, adapted to this repo's layout.
   `live_plot.py` reuses its `frequency_to_note`.
 - `manual_gate_check.py` — throwaway check that a real `start` message
   unblocks the plot (no motor).
+- `send.py` — publishes one message and exits. Defaults to `start` on
+  `START_TOPIC`; `--topic` picks another topic, `--goalie` sends the
+  goalie trigger.
+- `listen.py` — prints every message on the game's topics (start, ball,
+  goalie from `config.py`) with the exact topic it arrived on.
 - `mqttlib.py` — the class's MQTT wrapper (same file as `MQTTIntro/`, copied
   in per this repo's per-folder convention). Defaults to the public
   `test.mosquitto.org` broker.
@@ -79,12 +84,19 @@ python WhistleWorldCup/whistle_control_robot.py   # the real thing
 cd WhistleWorldCup && python -m pytest -q         # unit tests
 ```
 
-Send `start` from a second terminal (in `WhistleWorldCup/`) to test without
-the instructor:
+Send and watch messages from a second terminal (same venv):
 
 ```bash
-python -c "from mqttlib import MQTTClient; from config import START_TOPIC; c = MQTTClient(); c.connect(); c.publish(START_TOPIC, 'start'); c.disconnect()"
+python WhistleWorldCup/send.py                    # "start" on START_TOPIC
+python WhistleWorldCup/send.py --goalie           # goalie trigger on GOALIE_TOPIC
+python WhistleWorldCup/send.py stop --topic ME193/Rogers/ballstopped   # anything, anywhere
+python WhistleWorldCup/listen.py                  # watch start/ball/goalie topics
+python WhistleWorldCup/listen.py --topic ME193/Rogers   # also watch an extra topic
 ```
+
+These are the **real shared topics** — a `start` you send starts every
+robot waiting on that topic (your partner's, other teams'). To test the
+scripts themselves, use a private `--topic` like `yourname-test/whistle`.
 
 Run from Terminal.app or iTerm2, not kitty or the VS Code terminal — they
 don't reliably pass macOS mic permission through, and the mic then just

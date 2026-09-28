@@ -42,7 +42,7 @@ here, adapted to this repo's layout.
 - `mqttlib.py` — the class's MQTT wrapper (same file as `MQTTIntro/`, copied
   in per this repo's per-folder convention). Defaults to the public
   `test.mosquitto.org` broker.
-- `test_*.py` — 63 pytest unit tests (no mic, motor, or network needed).
+- `test_*.py` — 72 pytest unit tests (no mic, motor, or network needed).
 
 Dependencies: `pyaudio` (needs Homebrew's `portaudio`, already installed on
 this machine) and `pytest` were added to the root `requirements.txt`;
@@ -73,6 +73,12 @@ whistles on World Cup day should run `live_plot.py` first and re-fit
 | light sensor ≥ threshold | stops, publishes `Ball stopped` to `BALL_TOPIC`, opens stopped (death) song | — |
 | goal whistle | stops, publishes `Goal!` to `BALL_TOPIC`, opens goal song | — |
 | `GOALIE_TRIGGER_MESSAGE` on `GOALIE_TOPIC` | — | stops, opens success song |
+| `GOALIE_LOSS_MESSAGE` on `GOALIE_LOSS_TOPIC` (default: `Goal!` on `BALL_TOPIC`) | — | stops, opens loss song |
+
+The goalie's loss song (`GOALIE_LOSS_SONG_URL`) reuses the ball's death
+song until a different one is picked. By default the goalie's loss trigger
+matches what this code's own ball publishes on a goal, so two copies of
+this code (one ball, one goalie) already react to each other's goals.
 
 Songs are YouTube links opened in the default browser, so the laptop needs
 internet at the venue. **The messages still need to be agreed with the

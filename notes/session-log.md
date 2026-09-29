@@ -173,3 +173,9 @@ Two related conventions changed at Sam's request: headings now read `Subject —
 - 9 new tests (72 total, all passing), covering `goalie_outcome` and `run_goalie` with a fake MQTT client and a fake live plot.
 - Sam's GitHub account (`sl-ter`) has **read-only** access to the partner's repo `spadil01/AI_Robotics` (no push). To get changes into it, fork it and open a PR, or have the partner add `sl-ter` as a collaborator.
 - Changed the ball's goal message from `Goal!` to `Goal` at Sam's request, and moved both ball messages into `config.py` (`BALL_GOAL_MESSAGE`, `BALL_STOPPED_MESSAGE`). `GOALIE_LOSS_MESSAGE` now defaults to `BALL_GOAL_MESSAGE`, so the two stay in sync. Sam reported the goal-song URL opening in the browser before the role prompt on one run. No code path does that: it only opens after "ball" + `start` + a confirmed goal whistle, and no stray robot process was running. Cause unknown (possibly browser tab restore); watch for it on the next run.
+
+## Added MQTT chat to MQTTIntro — 2026-09-29
+
+- New `MQTTIntro/chat.py`: read and reply in one terminal window. It subscribes to one topic (default `ME193`), prints incoming messages with timestamps, and publishes each line typed. It sends `{"sender": "Sam", "text": ...}` JSON because a passive listen showed a classmate using that format on `ME193`. Incoming messages in that shape display as `sender: text`, and anything else prints raw. Options: `--name`, `--topic`, `--raw`.
+- The passive listen on `ME193/#` showed class chat on plain `ME193`. `ME193/Rogers/...` subtopics carried other teams' robot status and test traffic (e.g. `ME193/Rogers/goalie-0997` repeating `state WAITING FOR START`). Topics are case-sensitive, so `me193/chrisrogers` is not the class channel.
+- Tested two instances against each other on a private topic only.

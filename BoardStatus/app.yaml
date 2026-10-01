@@ -1,0 +1,6 @@
+name: Board Status
+icon: 📡
+description: Shows the board's real IP address and live system metrics (CPU, memory, disk, uptime) on the LED matrix.
+
+ports: []
+bricks: []

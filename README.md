@@ -15,6 +15,7 @@ Everything for the class lives in this one repo (`~/Code/Projects/me193`), organ
 - `WhistleWorldCup/` — whistle-controlled car for the World Cup: PyAudio pitch → drive commands, live signal/decision display, MQTT `start` and ball/goalie roles (see its [README](WhistleWorldCup/README.md))
 - `PoseRaceCar/` — pose-gesture race car assignment. **Its own separate git repo** (shared with a partner, remote `Lucalo44/PoseRaceCar`), just nested here for local folder organization — it's gitignored by this repo, not tracked as part of it. It has its own venv; don't confuse it with the root one below.
 - `ArduinoDisplay/` — Arduino App Lab app for an Arduino UNO Q: shows the current city and local weather on the 13x8 LED matrix (see its [README](ArduinoDisplay/README.md)). Not LEGO hardware like the rest of this repo, and has no Python deps beyond what App Lab's environment already provides, so it isn't in the root `requirements.txt`.
+- `BoardStatus/` — second Arduino App Lab app for the same UNO Q: shows the board's real IP + CPU/memory/disk/uptime on the LED matrix, plus a standalone SSH-login dashboard (see its [README](BoardStatus/README.md)). Same "not LEGO hardware" caveat as `ArduinoDisplay/`.
 - `notes/session-log.md` — running log of Claude Code session context across the semester
 - `requirements.txt` — shared dependencies for the assignments at this repo's root (not for `PoseRaceCar/`, which has its own)
 

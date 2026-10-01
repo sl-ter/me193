@@ -17,13 +17,13 @@ import legoeducation as le
 # The ball publishes to BALL_TOPIC when it stops (light sensor) or scores
 # (goal whistle); the goalie waits on GOALIE_TOPIC for GOALIE_TRIGGER_MESSAGE.
 START_TOPIC = "ME193/Rogers/"
-BALL_TOPIC = "ME193/Rogers/ballstatus"
-GOALIE_TOPIC = "ME193/Rogers/ballstopped"
+BALL_TOPIC = "ME193/Hudson"
+GOALIE_TOPIC = "ME193/Hudson"
 
 # The exact message payload (case-insensitive, whitespace-trimmed) the
 # goalie waits for on GOALIE_TOPIC before stopping and playing its song.
 # Placeholder -- confirm this matches whatever message is actually sent.
-GOALIE_TRIGGER_MESSAGE = "stop"
+GOALIE_TRIGGER_MESSAGE = "I lost"
 
 # What the "ball" role publishes to BALL_TOPIC when it scores (goal
 # whistle) or gets stopped (light sensor).
@@ -62,7 +62,7 @@ LIGHT_SENSOR_THRESHOLD = 50
 # mic, an audio interface, a virtual/loopback device -- run
 # list_audio_devices.py to print each available device's index and name,
 # then set this to that device's index.
-INPUT_DEVICE_INDEX = None  # partner uses 0; on this Mac 0 is "Background Music" (loopback), not a mic
+INPUT_DEVICE_INDEX = 2  # "External Microphone" = wired headphone mic on this Mac; partner uses 0. Indices shift as devices come and go -- re-run list_audio_devices.py if this stops working
 
 SAMPLE_RATE = 44100
 

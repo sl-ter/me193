@@ -12,6 +12,7 @@ APIs are free and require no API key. On any network/API failure it shows
 an error icon and retries a minute later instead of crashing.
 """
 
+import concurrent.futures
 import json
 import logging
 import time
@@ -29,7 +30,7 @@ logger = Logger("ArduinoDisplay", level=logging.INFO)
 # Configuration
 # ---------------------------------------------------------------------------
 
-TEMPERATURE_UNIT = "C"  # "C" or "F"
+TEMPERATURE_UNIT = "F"  # "C" or "F"
 REFRESH_INTERVAL_S = 10 * 60  # re-fetch location/weather every 10 minutes
 RETRY_INTERVAL_S = 60  # on failure, retry after 1 minute
 SCROLL_DELAY_S = 0.07  # time between scroll steps
@@ -321,15 +322,29 @@ def show_icon(category: str, duration: float = ICON_DURATION_S):
 # Main loop: fetch periodically, always cycle the display, fail gracefully
 # ---------------------------------------------------------------------------
 
-_state = {"data": None, "next_fetch": 0.0}
+_state = {"data": None, "next_fetch": 0.0, "future": None}
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="fetch")
 
 
 def refresh_if_due():
+    """Kick off/collect fetches on a worker thread so the display loop never
+    blocks: HTTP_TIMEOUT_S only bounds the socket read, not DNS resolution,
+    which can hang far longer than that at the OS level with no network."""
     now = time.time()
-    if now < _state["next_fetch"]:
+    future = _state["future"]
+
+    if future is None:
+        if now < _state["next_fetch"]:
+            return
+        _state["future"] = _executor.submit(fetch_city_and_weather)
         return
+
+    if not future.done():
+        return  # still waiting on the network; keep cycling the display
+
+    _state["future"] = None
     try:
-        data = fetch_city_and_weather()
+        data = future.result()
         logger.info(
             f"Updated: {data['city']}, {format_temperature(data['temp_c'])}, {data['category']}"
         )

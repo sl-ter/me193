@@ -192,6 +192,71 @@ New `ArduinoDisplay/` folder — not a LEGO Education exercise like the rest of 
 - Verified live on the connected UNO Q: logs confirmed `Updated: Cambridge, 16C, cloudy` and the matrix cycled through scroll city → scroll temperature → flashing cloud icon with no errors.
 - Folder name deliberately chosen as `ArduinoDisplay` (PascalCase, no space) to match this repo's folder-naming convention, even though the original request said "Arduino display" — confirmed with Sam first.
 
+## Fixed Arduino Display after a wifi switch, added Board Status — 2026-10-01
+
+Two unrelated follow-ups on the UNO Q from earlier today, in the same session.
+
+**`ArduinoDisplay` bugfix:** Sam reported the LED matrix went blank after the
+board briefly lost wifi. Root cause found via `apps_logs`: `fetch_city_and_weather()`
+ran synchronously inside the main display loop, and its `HTTP_TIMEOUT_S=6` only
+bounds the socket read, not DNS resolution (`urllib` never reaches
+`getaddrinfo` with a timeout) — with no network route, DNS hung for ~90
+minutes at the OS level, freezing the whole loop including the LED matrix
+redraw. Fixed by moving the fetch onto a background thread (`concurrent.futures`)
+so the display loop never blocks on it; confirmed in the logs it now retries
+cleanly every ~60s instead of stalling. Separately found the app's Docker
+container had a stale embedded DNS config (cached DNS servers from a previous
+network) even after the real wifi switched — `docker restart` on just that
+container (not a full board reboot) fixed it, since App Lab's own `apps_start`
+alone didn't force Docker to re-read the host's current resolv.conf. Also
+found and fixed a drift bug: a separate Claude session had changed
+`TEMPERATURE_UNIT` to `"F"` in this git repo earlier, but never pushed that
+to the board's actual running copy (editing the git folder directly doesn't
+sync to the board — only `apps_checkout` + edit does) — pushed the board's
+copy to match.
+
+**SSH access set up:** Sam wants to control the board mainly over SSH going
+forward. `sudo` on the board's `arduino` user needs a password nobody has
+(the guessed default `Arduino` was wrong, stopped after 3 failed attempts
+rather than keep guessing) — so set up SSH key auth instead of chasing the
+password: created `~/.ssh/authorized_keys` for `arduino` (no sudo needed,
+it's the user's own home dir) with Sam's Mac's `ed25519` key. Also found
+`avahi-daemon` already running (hostname `UNOQ2`), so `ssh arduino@UNOQ2.local`
+should work when both devices share a LAN — but mDNS doesn't cross network
+boundaries, so it silently hangs (no error, no prompt) if the Mac and board
+are on different networks/VLANs or the network blocks multicast (confirmed:
+it hung on `tufts_eecs`, a university network). Direct-by-IP SSH worked fine
+once Sam was on the same network as the board. **Verified: Sam successfully
+SSHed in with the new key.**
+
+**New `BoardStatus/` app** (see its own README) — LED-matrix readout of the
+board's real IP + CPU/memory/disk/uptime, plus a curses SSH-login dashboard,
+built because knowing the board's current IP is the actual blocker for
+SSH-based control. Sam was explicit this should **not** be merged into
+`ArduinoDisplay`'s code, even though it means losing the matrix to whichever
+app is actively running — a separate app it is. Key technical finding: each
+App Lab app's container is network-isolated (its own Docker bridge, checked
+via `docker inspect`), so it can't see the board's real wifi IP directly —
+worked around by writing the real IP to a plain file in the app's own folder
+(bind-mounted into the container as `/app`) via a host-level cron job.
+`board_dashboard.py` (the SSH-login TUI) sidesteps this entirely since it
+runs on the host, not in a container.
+
+Also hit and worked around a `board_exec` quirk worth remembering: any literal
+`$` in the `command` string gets silently eaten/expanded by something upstream
+of the board's actual shell — confirmed with a minimal `printf 'D: \$FOO\n'`
+test that mangled both the variable and the escape. Plain commands with no
+`$` work fine. Workaround used here: write any script that needs `$VAR`/`$(...)`
+content via the file-sync mechanism (`apps_checkout` + Write/Edit) instead of
+embedding it in a `board_exec` command string, and only use `board_exec` for
+`$`-free one-liners (`chmod`, `crontab`, appending a single `source` line to
+`.bashrc`).
+
+**Not yet confirmed:** whether `board_dashboard.py` actually auto-launches on
+a live SSH session — the `.bashrc` hook was installed via `board_exec` but not
+re-tested end-to-end by actually opening a new SSH connection afterward.
+Check this first thing next session.
+
 ## Switched Whistle World Cup mic to wired headphones — 2026-09-29
 
 - Set `INPUT_DEVICE_INDEX = 2` in `WhistleWorldCup/config.py`. With wired headphones plugged in, `list_audio_devices.py` showed 0/1 = Background Music (loopback), 2 = External Microphone (the headphone mic), 4 = MacBook Air Microphone, 6 = iPhone Continuity mic. Indices can shift when devices connect or disconnect, so re-run `list_audio_devices.py` if the stream opens the wrong device or fails to open. Set it back to `None` to use the built-in mic.

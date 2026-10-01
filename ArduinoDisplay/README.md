@@ -26,7 +26,7 @@ Arduino UNO Q.
 Both live at the top of `python/main.py`:
 
 ```python
-TEMPERATURE_UNIT = "C"          # "C" or "F"
+TEMPERATURE_UNIT = "F"          # "C" or "F"
 REFRESH_INTERVAL_S = 10 * 60    # how often to re-fetch city/weather
 RETRY_INTERVAL_S = 60           # retry delay after a failed fetch
 ```

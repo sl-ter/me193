@@ -1,0 +1,18 @@
+# app.yaml: The main configuration file for your Arduino App.
+# This file describes the application's metadata and properties.
+
+# The user-visible name of the application.
+name: Arduino Display
+
+# The icon for the application, can be an emoji or a short string.
+icon: 🌦️
+
+# A short description of what the app does.
+description: Fetches your city and local weather over the internet and shows them on the LED matrix as scrolling text plus a weather icon.
+
+# A list of network ports that the application exposes.
+# Example: [80, 443]
+ports: []
+
+# A list of bricks used by this application.
+bricks: []

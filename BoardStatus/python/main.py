@@ -5,8 +5,9 @@
 """
 Board Status
 ============
-Shows the board's real IP address and live system metrics (CPU, memory,
-disk, uptime) on the 13x8 LED matrix, cycling through each one.
+Scrolls the board's real IP address on the 13x8 LED matrix, on loop,
+nothing else — CPU/memory/disk/uptime live in the SSH-login dashboard
+(board_dashboard.py) instead.
 
 The app's own container runs in an isolated network namespace, so it can't
 see the board's real wifi IP directly (only a Docker-internal one). Instead
@@ -20,7 +21,6 @@ import time
 import unicodedata
 
 import numpy as np
-import psutil
 
 from arduino.app_utils import App, Bridge, Frame
 
@@ -37,28 +37,10 @@ MATRIX_COLS = 13
 
 # ---------------------------------------------------------------------------
 # 5x7 bitmap font (rows top->bottom, 7 rows tall, 5 cols wide per glyph).
-# Only the characters we actually need: A-Z, 0-9, space, ".", "%", ":".
+# An IPv4 address only ever needs digits, ".", and space.
 # ---------------------------------------------------------------------------
 
 FONT = {
-    "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
-    "B": ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
-    "C": ["01111", "10000", "10000", "10000", "10000", "10000", "01111"],
-    "D": ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
-    "E": ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
-    "F": ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
-    "G": ["01111", "10000", "10000", "10011", "10001", "10001", "01111"],
-    "H": ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
-    "I": ["11111", "00100", "00100", "00100", "00100", "00100", "11111"],
-    "K": ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
-    "L": ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
-    "M": ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
-    "N": ["10001", "11001", "10101", "10101", "10011", "10001", "10001"],
-    "O": ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
-    "P": ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
-    "S": ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
-    "T": ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
-    "U": ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
     "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
     "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
     "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
@@ -71,8 +53,6 @@ FONT = {
     "9": ["01110", "10001", "10001", "01111", "00001", "00010", "01100"],
     " ": ["00000", "00000", "00000", "00000", "00000", "00000", "00000"],
     ".": ["00000", "00000", "00000", "00000", "00000", "00000", "00100"],
-    "%": ["10001", "10010", "00010", "00100", "01000", "01001", "10001"],
-    ":": ["00000", "00100", "00000", "00000", "00000", "00100", "00000"],
 }
 
 GLYPH_WIDTH = 5
@@ -123,27 +103,6 @@ def read_ip() -> str:
         return "NO IP FILE"
 
 
-def format_uptime(seconds: float) -> str:
-    days, seconds = divmod(int(seconds), 86400)
-    hours, seconds = divmod(seconds, 3600)
-    minutes, _ = divmod(seconds, 60)
-    if days:
-        return f"{days}D {hours}H"
-    if hours:
-        return f"{hours}H {minutes}M"
-    return f"{minutes}M"
-
-
-def collect_metrics() -> dict:
-    return {
-        "ip": read_ip(),
-        "cpu": psutil.cpu_percent(interval=0.5),
-        "mem": psutil.virtual_memory().percent,
-        "disk": psutil.disk_usage("/").percent,
-        "uptime": format_uptime(time.time() - psutil.boot_time()),
-    }
-
-
 # ---------------------------------------------------------------------------
 # Display
 # ---------------------------------------------------------------------------
@@ -160,17 +119,8 @@ def scroll_text(text: str):
         time.sleep(SCROLL_DELAY_S)
 
 
-def display_cycle(metrics: dict):
-    scroll_text(f"IP {metrics['ip']}")
-    scroll_text(f"CPU {metrics['cpu']:.0f}%")
-    scroll_text(f"MEM {metrics['mem']:.0f}%")
-    scroll_text(f"DISK {metrics['disk']:.0f}%")
-    scroll_text(f"UP {metrics['uptime']}")
-
-
 def loop():
-    metrics = collect_metrics()
-    display_cycle(metrics)
+    scroll_text(read_ip())
 
 
 App.run(user_loop=loop)

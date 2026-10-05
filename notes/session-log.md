@@ -257,6 +257,100 @@ a live SSH session — the `.bashrc` hook was installed via `board_exec` but not
 re-tested end-to-end by actually opening a new SSH connection afterward.
 Check this first thing next session.
 
+## Board Status: TUI overhaul, matrix simplified to IP-only, autostart — 2026-10-01
+
+Same day, continued. Sam tested the dashboard live and it surfaced several
+real bugs plus a round of feature requests.
+
+- **Matrix simplified:** at Sam's explicit request, `python/main.py` no
+  longer cycles CPU/memory/disk/uptime — it just scrolls the bare IP,
+  forever. Those metrics live only in `board_dashboard.py` now. Pruned the
+  now-unused letter glyphs from the bitmap font (only digits/./space needed
+  for an IPv4 address) and all the now-dead `/proc` parsing functions from
+  `main.py`.
+- **Root cause of the "dead SSH session" bug, found:** Sam's terminal is
+  kitty, whose default `TERM=xterm-kitty` isn't in this board's terminfo
+  database, so `curses.initscr()` raised immediately — likely also
+  explains the original garbled-text/dead-tab mystery from earlier today.
+  Fixed in `board_dashboard.py`'s `main()`: catch that specific failure and
+  retry once under `TERM=xterm-256color` (confirmed present in the
+  terminfo DB) instead of leaving a bare traceback. The earlier hardening
+  (`|| true` + explicit "back to your shell" message in
+  `ssh_login_hook.sh`) worked as intended in the meantime — traceback
+  printed, but the user landed back at a working prompt instead of a dead
+  session.
+- **`psutil` isn't actually available** in the app's sandboxed Python env
+  (confirmed via `ModuleNotFoundError` in `apps_logs` after the first real
+  start attempt) — the catalog's "System Resources Logger" example only
+  gets it transitively through a brick it declares, which this app doesn't
+  use. Moot now since the matrix app dropped metrics entirely, but
+  `board_dashboard.py` was already stdlib/`/proc`-only for this reason and
+  needed no change.
+- **TUI overhaul** (Sam picked "all of the above" from a menu of options):
+  color-coded CPU/memory/disk bars (green/yellow/red by threshold via
+  curses color pairs), a CPU sparkline history (Unicode block-elevation
+  characters), network throughput per interface (parsed from
+  `/proc/net/dev`, filtering out `lo`/`docker`/`br-`/`veth`), a mini
+  top-5-processes-by-CPU list (parsed from each `/proc/<pid>/stat`, CPU%
+  computed from tick deltas over the same sample window as the system-wide
+  CPU read, `os.sysconf("SC_CLK_TCK")` for the tick rate), and a big
+  block-digit IP banner (hand-rolled 3-row 7-segment-style font, not a
+  proper figlet/pyfiglet dependency — kept it stdlib-only like the rest of
+  this app). Wrapped the whole thing in a hand-drawn ASCII box (`+`/`-`/`|`)
+  rather than a curses sub-window, to stay robust across terminal resizes
+  without extra window-lifecycle management.
+- **`apps_start` does not actually restart an already-running app** even
+  when its underlying code changed — confirmed via `docker ps` showing the
+  same container age before and after a no-op `apps_start` call. Had to
+  explicitly `apps_stop` then `apps_start` to pick up code changes. Worth
+  remembering: "status: running" doesn't mean "running the latest code."
+- **Sudo was fully blocked** (no one knew `arduino`'s password; `sudo -n`
+  confirmed passwordless sudo is locked to a narrow allowlist — specific
+  Arduino/system commands only, not general package installs) until
+  `sudo -l` turned up `/usr/local/bin/arduino-passwd`, a NOPASSWD helper
+  built into the board image specifically to let you set a new password
+  without knowing the old one (`read -s "pass"` + `chpasswd`, no visible
+  prompt text — easy to mistake for a hang, which Sam initially did, ran it
+  with empty input the first time, had to rerun deliberately). Had Sam run
+  it themselves over their own SSH session rather than via `board_exec`,
+  specifically to avoid the password ever appearing in tool-call
+  text/logs.
+- **New `board-status-autostart.service`** (systemd unit, `/etc/systemd/system/`)
+  makes the matrix app start with zero manual steps on every boot —
+  motivated by Sam wanting to run the board off a portable battery, away
+  from any computer running App Lab. Runs `arduino-app-cli app restart
+  user:board-status` (found via `sudo -l`'s output pointing at
+  `arduino-app-cli.service`, the always-on local daemon App Lab's own UI
+  talks to) after `arduino-app-cli.service` + `docker.service`. Two
+  non-obvious gotchas hit and fixed: (1) without `User=arduino` +
+  `Environment=HOME=/home/arduino`, systemd runs it as root with no
+  `$HOME`, and `arduino-app-cli` fails outright with `invalid config:
+  $HOME is not defined`; (2) `app start` (vs `app restart`) fails with
+  `App ... Is Running` if the app happens to already be up when the unit
+  fires — `restart` handles both cases. Required real sudo (writing to
+  `/etc/systemd/system/` and running `systemctl enable`), so Sam ran the
+  whole install block themselves. **Verified working end-to-end**:
+  `systemctl status` showed `active (exited)`, exit status 0, with the
+  full restart cycle in the journal (sketch recompiled/flashed, container
+  recreated, "restarted successfully").
+- **Security finding, not yet acted on:** having Sam's SSH key installed
+  does NOT disable password auth — `PasswordAuthentication` is still at
+  the Debian default (enabled), confirmed via `sshd_config` +
+  `sshd_config.d/` (empty, no override). Locking to key-only needs an
+  explicit edit + sshd restart, now actually possible since sudo is
+  unblocked — **not done yet, offered to Sam, no answer yet.**
+- Tried to self-SSH-test from inside an already-open board session
+  (`ssh arduino@<board's own IP>` run *from* a shell already on the
+  board) — fails because that shell has no private key of its own
+  (only `authorized_keys`, no `id_ed25519`), immediately falls back to
+  password. Not a bug; just ran the test from the wrong machine. Worth
+  remembering before concluding key auth is broken.
+- Also reconfirmed `ssh arduino@UNOQ2.local` (mDNS) doesn't reliably work
+  across all networks even when it worked once before — treat it as a
+  nice-to-have, not a dependable fallback; know the current IP (now
+  solved by the autostart matrix display) or check the router's DHCP
+  client list.
+
 ## Switched Whistle World Cup mic to wired headphones — 2026-09-29
 
 - Set `INPUT_DEVICE_INDEX = 2` in `WhistleWorldCup/config.py`. With wired headphones plugged in, `list_audio_devices.py` showed 0/1 = Background Music (loopback), 2 = External Microphone (the headphone mic), 4 = MacBook Air Microphone, 6 = iPhone Continuity mic. Indices can shift when devices connect or disconnect, so re-run `list_audio_devices.py` if the stream opens the wrong device or fails to open. Set it back to `None` to use the built-in mic.

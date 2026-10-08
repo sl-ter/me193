@@ -9,3 +9,6 @@ __pycache__/
 
 # SpectrogramClassifier --save output (user recordings, not source)
 /SpectrogramClassifier/recordings/
+
+# UNO Q deploy kit: this board's own address (tools/board_secrets.example.py is the template)
+/tools/board_secrets.py

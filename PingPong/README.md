@@ -14,7 +14,7 @@ the paddle pushes back with haptic feedback, which we haven't done before.
 | **MQTT** (`mqttlib.py`, as in MQTTIntro) | After every hit and miss, publishes the **record number of continuous hits** as a float (`"7.0"`) to `ME193/Rogers/Sam` | `pong.py` `Scoreboard` |
 | **Hardware programming** (`legoeducation` over BLE) | The IMU stream is raised from 10 Hz to 50 Hz, and the motor is used as a vibration motor | `paddles.py` |
 | **New: haptics** | An off-center LEGO weight on one motor output makes a rumble motor. As the ball approaches, light ticks start about 1 s out and speed up until it arrives. **Contact** is a stiff full-power kick (forward, then straight back); a sweet-spot hit gets a shorter, crisper kick plus an azure light. A **miss** is three long rumbles plus a red light. Plus a start beep | `paddles.py` `_haptic_loop`, rumble timing in `pong.py` |
-| **New: spin** | Twisting the paddle as you swing (like turning a doorknob) curves the ball. Spin is the share of the swing's peak gyro that's on the handle axis, from −1 to +1. The curve scales with ball speed, and the wall takes off half the spin | `swing.py`, `game.py` |
+| **New: spin** | **Rolling** the paddle as you swing curves the ball. Point its nose at the screen; rolling right (clockwise as you see it) curves right. It's roll, not yaw, because the swing itself is mostly yaw. Spin is the share of the swing's peak gyro that's on the roll axis, from −1 to +1. The curve scales with ball speed, and the wall takes off half the spin | `swing.py`, `game.py` |
 
 **The hit rule** combines pose and IMU. When the ball reaches your hitting line, it counts as a hit only if:
 - your paddle (from pose) is under the ball, and
@@ -32,7 +32,8 @@ Use Terminal.app or iTerm2. The VS Code terminal loses macOS camera permission.
 
 ```bash
 cd ~/Code/Projects/me193/PingPong
-venv/bin/python check_paddle.py --haptics          # check + calibrate the paddle -> paddle_calib.json
+venv/bin/python check_paddle.py                    # check + calibrate the paddle -> paddle_calib.json
+venv/bin/python check_paddle.py --haptics-only     # just feel the haptics (or --skip-haptics)
 venv/bin/python pong.py                            # loads paddle_calib.json automatically
 venv/bin/python pong.py --paddle keyboard --no-mqtt   # no hardware: space = flat swing, z/x = twist left/right
 venv/bin/pytest tests

@@ -430,3 +430,9 @@ real bugs plus a round of feature requests.
   - Replaced with `swing.find_twist_axis`: the principal component of the moving gyro samples, with its sign taken from the first strong movement (the right twist). Purity = share of motion on that axis; it warns below 75%.
   - `check_paddle.py` now saves steps 1–2 (IMU rate, rest/swing peaks, twist axis, purity) to `PingPong/paddle_calib.json`, which `pong.py` loads automatically. `--twist-axis/--twist-sign` still override it.
 - The `Future exception was never retrieved ... Device disconnected unexpectedly` at exit was harmless. `disconnect()` fails any command still awaiting a reply, and `stop()` had just sent `light_color(blocking=False)`. `LegoPaddle.stop()` now joins the haptic thread and uses blocking calls before disconnecting. Step 3 only runs with `--haptics`, and the script now says when it's skipped.
+
+## Ping-pong: spin is roll, not yaw — 2026-10-12
+
+- Second calibration run: IMU at **32 Hz** (50 requested), |ω| resting peak 25 vs. swinging peak **567**, so swing detection has a ~20× margin. Sam had been "twisting" in yaw, which gave a twist axis of (+0.75, −0.66, −0.02) with 66% purity: yaw twist mixes with the arm's own yaw.
+- Spin is now defined as **roll**: nose pointed at the screen, roll right = clockwise as seen by the player. A forehand swing is mostly yaw, so roll keeps spin independent of the swing. With the module's top facing forward, roll should show up mainly on gyro z. That's a sanity check for the next run.
+- `check_paddle.py` runs haptics by default now. Use `--haptics-only` to run only the haptics, or `--skip-haptics` to run only steps 1–2. The prompts say "roll".

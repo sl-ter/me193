@@ -13,8 +13,10 @@ threshold) so it reaches the game with as little delay as possible, and its
 power (peak / threshold) keeps updating while the swing lasts.
 
 Spin: alongside |omega| each sample can carry `twist`, the signed gyro
-reading on the axis that runs along the paddle's handle (turning it like a
-doorknob). At the swing's peak, spin = twist / |omega|: the fraction of the
+reading along the paddle's roll axis (nose pointed at the screen, rolling
+right = clockwise as the player sees it). It's roll rather than yaw because a
+swing is mostly yaw. pong.py projects the gyro onto the axis that
+check_paddle.py measured. At the swing's peak, spin = twist / |omega|: the fraction of the
 swing that was twist, in [-1, 1], with no units to worry about. A flat swing
 is ~0, a swing that rolls the wrist hard to the right is close to +1.
 """

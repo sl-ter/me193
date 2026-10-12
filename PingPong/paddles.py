@@ -30,7 +30,7 @@ import time
 
 from swing import gyro_magnitude
 
-# Haptic tuning (ms and % motor speed). Tune by feel: check_paddle.py --haptics
+# Haptic tuning (ms and % motor speed). Tune by feel: check_paddle.py --haptics-only
 TICK_MS, TICK_SPEED = 30, 35        # approach rumble: light
 KICK_MS = 45                        # contact: each half of the forward/back kick
 SWEET_KICK_MS = 30                  # sweet spot: shorter, crisper kick

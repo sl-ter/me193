@@ -436,3 +436,12 @@ real bugs plus a round of feature requests.
 - Second calibration run: IMU at **32 Hz** (50 requested), |ω| resting peak 25 vs. swinging peak **567**, so swing detection has a ~20× margin. Sam had been "twisting" in yaw, which gave a twist axis of (+0.75, −0.66, −0.02) with 66% purity: yaw twist mixes with the arm's own yaw.
 - Spin is now defined as **roll**: nose pointed at the screen, roll right = clockwise as seen by the player. A forehand swing is mostly yaw, so roll keeps spin independent of the swing. With the module's top facing forward, roll should show up mainly on gyro z. That's a sanity check for the next run.
 - `check_paddle.py` runs haptics by default now. Use `--haptics-only` to run only the haptics, or `--skip-haptics` to run only steps 1–2. The prompts say "roll".
+
+## Ping-pong: haptics too weak, haptic lab — 2026-10-12
+
+- Third calibration run: roll axis (−0.95, +0.21, −0.21), purity **80%**. The roll is mostly on gyro x, not z as predicted, so the module's axes aren't where I assumed. It's fine, because the calibration measures the axis instead of assuming it. Resting peak was 243 this time (vs. 25 before), so the paddle probably moved during "hold still". `pong.py` recalibrates at every game start anyway.
+- **Haptics were barely felt** (maybe one faint pulse in the whole demo). Likely causes, from reading the library:
+  - `motor_run_for_time` is speed-regulated with an acceleration ramp, so 30–120 ms pulses barely move the motor.
+  - In the contact "kick", the reverse command overrides the forward one almost immediately.
+  - LEGO motors are geared down to a few turns per second, so an off-center weight can't spin fast enough to buzz like a phone's vibration motor.
+- Added `PingPong/haptic_lab.py`. It tries raw `motor_set_duty_cycle` pulses (no ramp), out-and-back jolts, back-and-forth shakes, a light tick, and a 1.5 s spin, all with BRAKE end state. It measures the weight's actual rotation from `dm.motor[0].position`, asks Sam to rate each 0–3, and saves `haptic_lab.json`. Waiting on Sam's results before rewriting the haptics in `paddles.py`.

@@ -1,12 +1,12 @@
 {
-  "time": "2026-10-12 17:15:19",
-  "imu_rate_hz": 32.3,
-  "rest_peak": 24.9,
-  "swing_peak": 567.0,
+  "time": "2026-10-12 17:20:17",
+  "imu_rate_hz": 29.8,
+  "rest_peak": 243.3,
+  "swing_peak": 534.4,
   "twist_axis": [
-    0.7467,
-    -0.6647,
-    -0.0245
+    -0.9545,
+    0.207,
+    -0.2147
   ],
-  "twist_purity": 0.657
+  "twist_purity": 0.801
 }

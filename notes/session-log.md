@@ -445,3 +445,31 @@ real bugs plus a round of feature requests.
   - In the contact "kick", the reverse command overrides the forward one almost immediately.
   - LEGO motors are geared down to a few turns per second, so an off-center weight can't spin fast enough to buzz like a phone's vibration motor.
 - Added `PingPong/haptic_lab.py`. It tries raw `motor_set_duty_cycle` pulses (no ramp), out-and-back jolts, back-and-forth shakes, a light tick, and a 1.5 s spin, all with BRAKE end state. It measures the weight's actual rotation from `dm.motor[0].position`, asks Sam to rate each 0–3, and saves `haptic_lab.json`. Waiting on Sam's results before rewriting the haptics in `paddles.py`.
+
+## Ping-pong: haptics rebuilt on raw duty cycle — 2026-10-12
+
+- Sam's `haptic_lab.json`:
+
+  | Variant | Swing | Rating | Note |
+  |---|---|---|---|
+  | A: old run_for_time 120 ms | 13° | 1 | |
+  | B: duty 100% 150 ms | 144° | 2 | "half turn", clear |
+  | C: 400 ms | 579° | 3 | "only useful for a start" |
+  | E: "jolt" 150/150 | 298° | 2 | "solid but not too much" |
+  | F/G: shakes | | 1 | wiggles |
+  | H: 40% 60 ms | 17° | 1 | "very slight, I like it" |
+  | I: 1.5 s spin | 2832° | 3 | about 5 rev/s at full speed |
+
+- **Firmware behavior, measured from the motor's `power` field:** duty cycle ramps at ~100% per ~200 ms in both directions, and `motor_set_acceleration(100, 100)` doesn't change that. Commands take effect ~60 ms after sending. So "out then straight back" jolts can't reverse; the reverse just ramps power down. That's why D–G ended at their max position. Reversal itself works (tested at 40%).
+- New haptics in `paddles.py`, using `motor_set_duty_cycle` + `motor_stop` with BRAKE end state:
+
+  | Event | Pulse | Swing (mean of 5) |
+  |---|---|---|
+  | Tick (approach rumble) | 45% for 75 ms far → 100 ms near | ~17° → ~35° |
+  | Contact | 100% for 200 ms | ~141° |
+  | Sweet spot | 100% for 300 ms | ~300° |
+  | Miss | 3 × 75% for 140 ms, alternating direction | |
+  | Start | 400 ms | |
+
+  The rumble floor is 0.17 s between ticks. Swing per pulse varies run to run (2–54° for ticks), depending on where the weight rests relative to gravity. Pulse length matters more than duty, because of the ramp.
+- The shutdown warning came back with non-blocking duty commands (some replies never arrive). `LegoPaddle._cancel_unanswered()` cancels pending reply futures before `disconnect()`. It uses the library's private `_pending_responses`, best-effort only.

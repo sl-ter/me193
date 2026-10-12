@@ -64,11 +64,13 @@ def test_spin_is_twist_share_at_the_peak():
 
 
 def test_rumble_speeds_up_as_ball_approaches():
+    import math
     import pong
     assert pong.rumble_interval(None) is None
     assert pong.rumble_interval(pong.RUMBLE_START + 0.1) is None
     far, near = pong.rumble_interval(pong.RUMBLE_START), pong.rumble_interval(0.0)
-    assert far == pong.RUMBLE_SLOW and near == pong.RUMBLE_FAST and near < far
+    assert math.isclose(far, pong.RUMBLE_SLOW) and math.isclose(near, pong.RUMBLE_FAST)
+    assert near < far
 
 
 def test_twist_axis_found_off_axis_with_sign_from_first_motion():

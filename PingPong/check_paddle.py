@@ -97,8 +97,8 @@ def haptics_demo(paddle):
     """Step 3: play each haptic pattern."""
     print("\n[3/3] Haptics")
     print("  approach rumble (slow -> fast):")
-    for gap in [0.40, 0.30, 0.22, 0.15, 0.10, 0.09, 0.09]:
-        paddle.haptic("tick")
+    for i, gap in enumerate([0.45, 0.38, 0.31, 0.26, 0.21, 0.18, 0.17]):
+        paddle.haptic("tick", strength=i / 6)
         time.sleep(gap)
     time.sleep(0.5)
     for kind in ["hit", "sweet", "miss", "start"]:

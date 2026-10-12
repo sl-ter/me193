@@ -1,0 +1,68 @@
+{
+  "time": "2026-10-12 17:30:40",
+  "results": [
+    {
+      "variant": "A  old: run_for_time 120 ms (baseline)",
+      "max_deg": 13,
+      "net_deg": 13,
+      "felt": 1,
+      "note": "slight turn"
+    },
+    {
+      "variant": "B  raw duty 100%, 150 ms",
+      "max_deg": 144,
+      "net_deg": 142,
+      "felt": 2,
+      "note": "Half turn"
+    },
+    {
+      "variant": "C  raw duty 100%, 400 ms",
+      "max_deg": 579,
+      "net_deg": 577,
+      "felt": 3,
+      "note": "1.5 turns, likely only useful for a start stong, too strong for gameplay"
+    },
+    {
+      "variant": "D  jolt: 100% out 80 ms, straight back 80 ms",
+      "max_deg": 64,
+      "net_deg": 64,
+      "felt": 1,
+      "note": "slight turn"
+    },
+    {
+      "variant": "E  jolt, bigger: 150 ms out, 150 ms back",
+      "max_deg": 298,
+      "net_deg": 296,
+      "felt": 2,
+      "note": "0.5 - 1 turn, solid but but not too much"
+    },
+    {
+      "variant": "F  shake: +-100% every 50 ms, 8 times",
+      "max_deg": 160,
+      "net_deg": 157,
+      "felt": 1,
+      "note": "felt like a little wiggle"
+    },
+    {
+      "variant": "G  shake: +-100% every 30 ms, 12 times",
+      "max_deg": 117,
+      "net_deg": 117,
+      "felt": 1,
+      "note": "also a wiggle, but slightly less than previous, mostly just felt like a slightt turn"
+    },
+    {
+      "variant": "H  light tick: duty 40%, 60 ms",
+      "max_deg": 17,
+      "net_deg": 17,
+      "felt": 1,
+      "note": "very slight, I like it"
+    },
+    {
+      "variant": "I  long spin: 100% for 1.5 s (how fast does the weight go?)",
+      "max_deg": 2832,
+      "net_deg": 2832,
+      "felt": 3,
+      "note": "too much for anything useful I think"
+    }
+  ]
+}

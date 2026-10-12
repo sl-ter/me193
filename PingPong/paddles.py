@@ -4,7 +4,9 @@ and takes haptic cues. Same interface, so pong.py doesn't care which:
 
     start()            connect / spin up threads
     poll()             -> [(t, |gyro|, (gx, gy, gz)), ...] new samples since last call
-    haptic(kind)       "start" | "hit" | "sweet" | "miss" | "tick" (never blocks)
+    haptic(kind, strength=1.0)
+                       "start" | "hit" | "sweet" | "miss" | "tick" (never blocks);
+                       strength 0..1 scales the tick
     on_key(key)        keyboard input from the OpenCV window
     stop()
 
@@ -13,13 +15,25 @@ LegoPaddle      the LEGO Education Double Motor: built-in IMU over Bluetooth,
 KeyboardPaddle  no hardware: space = flat swing, z / x = swing twisting
                 left / right (spin). For testing the game.
 
-Haptics are two layers on the same weighted motor:
-  "tick"         the approach rumble: a light, short pulse. pong.py sends them
-                 faster as the ball gets closer. Dropped if anything else is
-                 waiting, so they never delay the contact kick.
-  "hit"/"sweet"  contact: a full-power kick forward then straight back. The
-                 direction reversal is what makes it feel stiff rather than
-                 buzzy, so it stands out from the rumble.
+Haptics are two layers on the same weighted motor, driven with raw duty
+cycle (motor_run_for_time is speed-regulated and barely moves in a short
+pulse). What the motor can do, measured with haptic_lab.py on 10/12:
+  - the firmware ramps power up and down at ~100% per 200 ms, whatever
+    motor_set_acceleration says, and commands land ~60 ms after sending.
+    So a "kick then reverse" can't reverse: the reverse just ramps power
+    back down. What you feel is how far the weight swings.
+  - Sam's ratings: 40% for 60 ms = "very slight, I like it" (the rumble);
+    100% for 150 ms = clear (contact); ~250-300 ms = solid; 400 ms = strong,
+    too much for gameplay but fine for a start signal.
+
+  "tick"         approach rumble: light pulse, a little stronger as the ball
+                 gets closer. pong.py sends them faster as it approaches.
+                 Dropped if anything else is waiting, so they never delay
+                 the contact pulse.
+  "hit"          contact: full power, about half a turn of the weight.
+  "sweet"        sweet-spot contact: longer, so more solid, plus an azure light.
+  "miss"         three medium pulses alternating direction ("no-no-no"), red light.
+  "start"        one strong pulse, beep, green light.
 """
 
 import math
@@ -30,11 +44,13 @@ import time
 
 from swing import gyro_magnitude
 
-# Haptic tuning (ms and % motor speed). Tune by feel: check_paddle.py --haptics-only
-TICK_MS, TICK_SPEED = 30, 35        # approach rumble: light
-KICK_MS = 45                        # contact: each half of the forward/back kick
-SWEET_KICK_MS = 30                  # sweet spot: shorter, crisper kick
-MISS_MS, MISS_GAP_MS = 180, 120     # miss: three long rumbles
+# Haptic tuning (ms and % duty). Tune by feel: check_paddle.py --haptics-only
+# Power ramps slowly, so pulse length sets the strength more than duty does.
+TICK_DUTY = 45                      # approach rumble
+TICK_MS_FAR, TICK_MS_NEAR = 75, 100 # rumble pulse: ~17 deg far -> ~35 deg about to arrive
+HIT_MS, SWEET_MS = 200, 300         # contact at full power: ~140 deg / ~300 deg of swing
+MISS_MS, MISS_GAP_MS, MISS_DUTY = 140, 160, 75   # x3, alternating direction
+START_MS = 400
 
 
 class LegoPaddle:
@@ -107,9 +123,32 @@ class LegoPaddle:
                 self.dm.motor_stop(motor=self.le.MOTOR_BOTH)
                 self.dm.light_color(self.le.LEGO_COLOR_NOCOLOR)
                 time.sleep(0.1)
+                self._cancel_unanswered()
                 self.dm.disconnect()
             except Exception:
                 pass
+
+    def _cancel_unanswered(self):
+        """Non-blocking haptic commands leave reply futures that nobody
+        awaits; some never get a reply. disconnect() would fail them and
+        asyncio would print "Future exception was never retrieved". Cancel
+        them first (cancelled futures are silent). Reaches into the
+        library's internals, so it's best-effort only."""
+        try:
+            from legoeducation._platform import _persistent_loop as loop
+            pending = [list(dq) for dq in self.dm._pending_responses.values()]
+
+            def cancel():
+                for dq in pending:
+                    for fut in dq:
+                        if not fut.done():
+                            fut.cancel()
+
+            if loop is not None and not loop.is_closed():
+                loop.call_soon_threadsafe(cancel)
+                time.sleep(0.05)
+        except Exception:
+            pass
 
     # -- IMU -------------------------------------------------------------------
 
@@ -142,12 +181,12 @@ class LegoPaddle:
 
     # -- haptics -----------------------------------------------------------------
 
-    def haptic(self, kind):
+    def haptic(self, kind, strength=1.0):
         if not self.haptics_on:
             return
         if kind == "tick" and (self._busy or not self._haptic_q.empty()):
             return                      # rumble is best-effort; never queue it
-        self._haptic_q.put(kind)
+        self._haptic_q.put((kind, strength))
 
     def _haptic_loop(self):
         # Bluetooth calls happen on this thread so the game loop never waits
@@ -155,38 +194,38 @@ class LegoPaddle:
         le = self.le
         motor = le.MOTOR_LEFT if self.haptic_motor == "left" else le.MOTOR_RIGHT
 
-        def pulse(ms, speed=100, direction=le.MOTOR_MOVE_DIRECTION_CLOCKWISE):
-            self.dm.motor_run_for_time(ms, motor=motor, speed=speed,
-                                       direction=direction, blocking=False)
-            time.sleep(ms / 1000)
+        # brake (not coast) so each pulse ends sharply
+        self.dm.motor_set_end_state(le.MOTOR_END_STATE_BRAKE, motor=motor)
 
-        def kick(ms):
-            pulse(ms)
-            pulse(ms, direction=le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE)
+        def pulse(ms, duty=100):
+            self.dm.motor_set_duty_cycle(duty, motor=motor, blocking=False)
+            time.sleep(ms / 1000)
+            self.dm.motor_stop(motor=motor, blocking=False)
 
         while self._running:
             try:
-                kind = self._haptic_q.get(timeout=0.2)
+                kind, strength = self._haptic_q.get(timeout=0.2)
             except queue.Empty:
                 continue
             self._busy = True
             try:
                 if kind == "tick":
-                    pulse(TICK_MS, TICK_SPEED)
+                    s = max(0.0, min(1.0, strength))
+                    pulse(TICK_MS_FAR + s * (TICK_MS_NEAR - TICK_MS_FAR), TICK_DUTY)
                 elif kind == "start":
                     self.dm.light_color(le.LEGO_COLOR_GREEN, blocking=False)
                     self.dm.beep(pattern=le.SOUND_PATTERN_BEEP_UP_MIDDLE_DOWN, blocking=False)
-                    pulse(150)
+                    pulse(START_MS)
                 elif kind == "hit":
-                    kick(KICK_MS)
+                    pulse(HIT_MS)
                 elif kind == "sweet":
                     self.dm.light_color(le.LEGO_COLOR_AZURE, blocking=False)
-                    kick(SWEET_KICK_MS)
+                    pulse(SWEET_MS)
                     self.dm.light_color(le.LEGO_COLOR_GREEN, blocking=False)
                 elif kind == "miss":
                     self.dm.light_color(le.LEGO_COLOR_RED, blocking=False)
-                    for _ in range(3):
-                        pulse(MISS_MS)
+                    for i in range(3):
+                        pulse(MISS_MS, MISS_DUTY if i % 2 == 0 else -MISS_DUTY)
                         time.sleep(MISS_GAP_MS / 1000)
                     self.dm.light_color(le.LEGO_COLOR_GREEN, blocking=False)
             except Exception as e:
@@ -236,5 +275,5 @@ class KeyboardPaddle:
             self._spike = None
         return out
 
-    def haptic(self, kind):
+    def haptic(self, kind, strength=1.0):
         pass

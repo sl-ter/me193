@@ -40,8 +40,9 @@ COUNTDOWN_S = 3.0
 
 # Approach rumble: once the ball is RUMBLE_START seconds away, light ticks
 # start every RUMBLE_SLOW s and speed up to every RUMBLE_FAST s at contact.
+# Each tick keeps the motor busy ~60 ms (+~60 ms Bluetooth), hence the floor.
 RUMBLE_START = 1.0
-RUMBLE_SLOW, RUMBLE_FAST = 0.40, 0.09
+RUMBLE_SLOW, RUMBLE_FAST = 0.45, 0.17
 PAUSE_TAG = 0
 
 WIN_W, WIN_H = 1000, 720
@@ -365,9 +366,10 @@ def main():
                         trail.clear()
                 if game.in_play:
                     trail.append((game.x, game.y))
-                gap = rumble_interval(game.time_to_paddle())
+                tta = game.time_to_paddle()
+                gap = rumble_interval(tta)
                 if not args.no_rumble and gap is not None and now - last_tick >= gap:
-                    paddle.haptic("tick")
+                    paddle.haptic("tick", strength=1.0 - tta / RUMBLE_START)
                     last_tick = now
 
             # --- draw -----------------------------------------------------------

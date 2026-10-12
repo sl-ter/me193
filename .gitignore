@@ -10,5 +10,14 @@ __pycache__/
 # SpectrogramClassifier --save output (user recordings, not source)
 /SpectrogramClassifier/recordings/
 
+# SillyWalks simulator practice output (the robot's qtable.json IS kept)
+/SillyWalks/qtable_sim.json
+/SillyWalks/training_log_sim.csv
+/SillyWalks/training_sim.png
+
 # UNO Q deploy kit: this board's own address (tools/board_secrets.example.py is the template)
 /tools/board_secrets.py
+
+# PingPong: MediaPipe pose model, downloaded automatically by vision.py
+/PingPong/models/
+.pytest_cache/

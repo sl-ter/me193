@@ -355,6 +355,13 @@ real bugs plus a round of feature requests.
 
 - Set `INPUT_DEVICE_INDEX = 2` in `WhistleWorldCup/config.py`. With wired headphones plugged in, `list_audio_devices.py` showed 0/1 = Background Music (loopback), 2 = External Microphone (the headphone mic), 4 = MacBook Air Microphone, 6 = iPhone Continuity mic. Indices can shift when devices connect or disconnect, so re-run `list_audio_devices.py` if the stream opens the wrong device or fails to open. Set it back to `None` to use the built-in mic.
 
+## Added Silly Walks Q-learning — 2026-10-06
+
+- New `SillyWalks/` folder for the Silly Walks assignment. The handout says to "train" the crawler (Double Motor, one arm per side) to go straight with a Q-table. Training means the robot crawling with epsilon-greedy actions while updating the table online. There's no offline model; the result is `qtable.json`. The design follows the handout exactly: 9 yaw-error states (symmetric bins at |e| 2/5/10/20°), 5 actions (diff −40/−20/0/+20/+40 split around `BASE_SPEED`), reward +1/0/−1 at |e| <2/<10/≥10, ε×0.98 per step. Choices the handout left open: α 0.3, γ 0.9, ε floor 0.05, 0.5 s steps, 30-step episodes, an episode ends (terminal, no bootstrap) past 45°, and ties in argmax are broken randomly. Without random tie-breaking an all-zero row always picks A0.
+- Files: `crawler.py` (hardware settings and `RealCrawler`/`SimCrawler`, same interface), `check_robot.py` (yaw axis/sign/units and action-direction check), `qlearn.py` (train / `--sim` / `--run` / `--fresh`; saves table and ε after every episode and resumes), `plot_training.py`, `lelib.py` (copied from `PDPositionTracker/`). Card: orange `0994`.
+- Only the simulator has been tested. 80 episodes: on-target share rose from 0% to ~70%, and it learned A3 (gentle left) at state 4 to cancel the sim's built-in right drift. **Not yet run on the real robot.** Still unverified: whether `imu_device.yaw` is in degrees (lelib assumes so), which `YAW_FACE` the crawler's mounting needs, and the `FORWARD`/`SWAP_SIDES` signs. `check_robot.py --drive` answers all of these.
+- Sim outputs (`qtable_sim.json`, `training_log_sim.csv`, `training_sim.png`) are gitignored. The robot's `qtable.json`/`training_log.csv` are meant to be committed.
+
 ## Added UNO Q deploy kit (Cmd+Shift+B → board) — 2026-10-08
 
 - Installed Chris Rogers's `unoq-vscode-kit.zip` (class repo, `Public stuff/UNOQ code/`, guide `DevelopingUNOQAppsInVSCode.md`) at this repo's root: `tools/` (`deploy.py`, `config.py`, `Tufts_WiFi.py`, `board_secrets.example.py`, `README.md`) and `.vscode/tasks.json`. In VS Code, open a file in `ArduinoDisplay/` or `BoardStatus/` and press Cmd+Shift+B: Run on UNO Q / Python in UNO Q container / Terminal on UNO Q / Advertise UNO Q on Tufts WiFi. Kit's `CLAUDE.md` merged into ours as a "UNO Q apps" section.
@@ -366,3 +373,44 @@ real bugs plus a round of feature requests.
 - **Verified:** `deploy.py --cmd` over USB, and a full `deploy.py BoardStatus/...` (stop → copy → sketch flash → container start → logs). It restarted `board-status` in place with no duplicate folder. Before deploying, diffed both apps against the board's copies: code identical, only READMEs differed (ours newer).
 - Also on the board, not in this repo: `mqtt-minifig-car` (based on Chris's MQTT Minifig Monitor, adds DC-motor drive) and `dlv` (empty template). Pull them into me193 before editing them via the kit.
 - Board clock reads 2026-10-01 in the app logs, a week behind. Not investigated.
+
+## Added Custom Robot Centering (YOLO minifig car) — 2026-10-11
+
+- New `CustomRobotCentering/` folder: the `day5/` folder of Chris Liang's repo (`github.com/ChrisLiang33/mobile-robotics`, last commit `67adaab`) copied in without git history. The rest of that repo (day3/day4) was dropped. The repo folder was deleted, so pull fresh from GitHub to get any upstream changes.
+- Laptop side: `track_minifig.py` runs the team's trained `models/minifig.pt` (YOLOv8n) on the webcam and publishes `{"x","y","w","h",...,"found"}` to `ME193/minifig/chris` on `test.mosquitto.org`. The UNO Q app (`unoq/mqtt-minifig-car/`, which is also on the board as `mqtt-minifig-car`) subscribes to that topic and drives. The topics must match: `MQTT_TOPIC` in `common.py` and in the board's `main.py`, or pass `--topic`.
+- Has its **own** `.venv` (Python **3.11**, because the root venv is 3.14 and PyTorch wheels lag) + `requirements.txt` (pip freeze). Run with `CustomRobotCentering/.venv/bin/python track_minifig.py`. Verified: the model loads (class `green_minifig`), MPS available, broker reachable. Cameras: 0 = MacBook Air Camera (default), 1 = Sam's iPhone.
+- Sam says the board is already programmed and the hardware works. Nothing was deployed from here. Its `unoq/unoq.sh deploy` script is Chris's own deployer; prefer `tools/deploy.py` (add a `BOARD_APP_NAMES` mapping to `mqtt-minifig-car` first) if it ever needs redeploying.
+
+## Added Virtual ping-pong midterm — 2026-10-12
+
+- New `PingPong/` folder for the midterm: ping-pong against a virtual wall with the **LEGO Double Motor as the paddle**. Sam considered the UNO Q too but chose LEGO as simpler; the comparison is in the README. Requirements as given: pose (paddle in the right place), IMU (is the player swinging), AprilTag for level/ball speed and game start, score on MQTT `ME193/Rogers/Sam` as a float = record continuous-hit streak, plus something new (haptics).
+- Design:
+  - MediaPipe wrist x → paddle x. It runs on the *un-mirrored* frame so MediaPipe's left/right is the person's own; x is mirrored afterwards.
+  - Gyro magnitude swing detector: threshold = resting mean + k·std from a 2 s still calibration, with a floor of 50 raw units; rising-edge events with a 400 ms refractory period.
+  - Hit = paddle under the ball **and** a swing in [−0.30, +0.15] s around the crossing.
+  - Tags 1/2/3 = easy/medium/hard, tag 0 = pause.
+  - Record is published on every hit and miss.
+  - Haptics come from an off-center LEGO weight on the left motor output (`motor_run_for_time` pulses), plus `light_color` and `beep`.
+- **`legoeducation` IMU notifications default to every 100 ms (10 Hz)**: `DEFAULT_DEVICE_NOTIFICATION_DELAY` in `basic_device.py`, min 15 ms. `LegoPaddle` connects with `device_notification_delay=20` instead of using `lelib`'s connect, which doesn't expose it. Useful for anything else reading the IMU (SillyWalks reads yaw at the default rate).
+- Own `PingPong/venv` (Python 3.14; MediaPipe 0.10.35 does run on 3.14, as PoseRaceCar's venv shows) + `requirements.txt` (pip freeze). Pose model is copied from PoseRaceCar and auto-downloads if missing; `PingPong/models/` and `.pytest_cache/` are gitignored.
+- Verified without hardware:
+  - 17 pytest tests pass.
+  - Headless smoke test: tag ID read after the hold time, MediaPipe loads, a frame renders, MQTT round trip of `"7.0"` on `ME193/Rogers/Sam/selftest`.
+  - A scripted-bot run of the real `main()` loop (fake camera with tag 3, perfect-tracking pose, auto-swing) went through tag → calibrate → countdown → rally → hits/misses → re-serve.
+- **Not yet run on the real Double Motor or webcam.** Sam was getting the hardware. Still to check: gyro units/rate and haptic feel (`check_paddle.py --haptics`), the threshold floor, `SWING_LATE`, and `MAX_SPEED` (2.2 court heights/s may be too fast for hard).
+- Ideas discussed for extras: IMU-shaped shots (spin from gyro axis sign), AprilTag power-up cards, anticipation rumble, and two-player over the internet. For two-player, a friend opens a GitHub Pages link running MediaPipe in the browser; mqtt.js over wss to test.mosquitto.org; each side simulates its own half and hands the ball off at the net.
+
+## Ping-pong: spin, approach rumble, card 0994 — 2026-10-12
+
+- Card corrected: Sam's Double Motor card is **orange 0994**, now the default `--card-color/--card-serial` in `pong.py` and `check_paddle.py`. The "red 1129" in the earlier 9/28 log entry was a different team setup.
+- Two-player-over-the-internet idea **scrapped** by Sam.
+- **Spin**:
+  - Each IMU sample now carries (gx, gy, gz).
+  - `SwingDetector` records spin = twist-axis gyro / |ω| at the swing's peak, in −1..1 with no units.
+  - `game.py` applies `vx += CURVE·spin·speed·dt`, with a 0.25 deadzone; the wall keeps half the spin.
+  - The twist axis and sign depend on the mount. `check_paddle.py` step 2 has Sam twist right and prints `--twist-axis/--twist-sign`.
+- **Haptics are now two layers**:
+  - A light approach rumble (`tick` = 30 ms at 35%). It starts 1 s before arrival, every 0.40 s, speeding up to every 0.09 s. Ticks are dropped whenever anything else is queued or playing.
+  - A stiff contact kick: 45 ms forward + 45 ms reverse at full power. The reversal makes it feel distinct from the buzz.
+- `KeyboardPaddle`: z/x = swing twisting left/right.
+- 23 tests pass. The headless bot run through `main()` showed spins ±0.8 reaching the ball, 39 rumble ticks, and kicks on hits. Still not run on real hardware.

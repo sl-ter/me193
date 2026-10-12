@@ -7,8 +7,9 @@ Virtual ping-pong against a wall, with a LEGO Double Motor as the paddle.
   AprilTag           tag 1/2/3 = easy/medium/hard, starts the game; tag 0 = pause
   MQTT               record streak, as a float, to ME193/Rogers/Sam on every hit/miss
   spin               twist the paddle as you swing to curve the ball
-  haptics            light rumble that speeds up as the ball approaches, a
-                     stiff kick on contact, a long rumble on a miss
+  haptics            light rumble that builds as the ball approaches, a pulse
+                     on contact (longer on the sweet spot), a wobble on a miss,
+                     and a big wobble to start and end the game
 
 Run (from Terminal.app/iTerm2 -- the VS Code terminal loses camera permission):
   venv/bin/python pong.py                              # LEGO paddle, card orange 0994
@@ -297,6 +298,8 @@ def main():
             detector.start_calibration()
 
     def pick_level(tag_id, now):
+        if state in ("RALLY", "PAUSED"):
+            paddle.haptic("end")            # switching level ends this game
         game.set_level(LEVELS[tag_id])
         trail.clear()
         go("CALIBRATE" if detector.threshold is None else "COUNTDOWN", now)
@@ -395,6 +398,8 @@ def main():
         pass
     finally:
         print(f"Record streak: {game.record}")
+        if state in ("RALLY", "PAUSED"):
+            paddle.haptic("end")            # stop() waits for it to play
         cap.release()
         cv2.destroyAllWindows()
         pose.close()

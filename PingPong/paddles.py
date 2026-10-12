@@ -5,7 +5,7 @@ and takes haptic cues. Same interface, so pong.py doesn't care which:
     start()            connect / spin up threads
     poll()             -> [(t, |gyro|, (gx, gy, gz)), ...] new samples since last call
     haptic(kind, strength=1.0)
-                       "start" | "hit" | "sweet" | "miss" | "tick" (never blocks);
+                       "start" | "end" | "hit" | "sweet" | "miss" | "tick" (never blocks);
                        strength 0..1 scales the tick
     on_key(key)        keyboard input from the OpenCV window
     stop()
@@ -33,7 +33,10 @@ pulse). What the motor can do, measured with haptic_lab.py on 10/12:
   "hit"          contact: full power, about half a turn of the weight.
   "sweet"        sweet-spot contact: longer, so more solid, plus an azure light.
   "miss"         three medium pulses alternating direction ("no-no-no"), red light.
-  "start"        one strong pulse, beep, green light.
+  "start"/"end"  the bookends: a big full-power wobble, 4 long pulses
+                 alternating direction. Same wobble for both, so a game is
+                 framed by it; start adds a rising beep + green light, end a
+                 triple beep + light off. Bigger and longer than the miss.
 """
 
 import math
@@ -50,7 +53,7 @@ TICK_DUTY = 45                      # approach rumble
 TICK_MS_FAR, TICK_MS_NEAR = 75, 100 # rumble pulse: ~17 deg far -> ~35 deg about to arrive
 HIT_MS, SWEET_MS = 200, 300         # contact at full power: ~140 deg / ~300 deg of swing
 MISS_MS, MISS_GAP_MS, MISS_DUTY = 140, 160, 75   # x3, alternating direction
-START_MS = 400
+WOBBLE_MS, WOBBLE_GAP_MS, WOBBLE_N = 260, 110, 4   # start/end, full power
 
 
 class LegoPaddle:
@@ -112,9 +115,13 @@ class LegoPaddle:
         self._haptic_thread.start()
 
     def stop(self):
+        # let anything already queued (e.g. the "end" wobble) finish playing
+        deadline = time.monotonic() + 3
+        while (self._busy or not self._haptic_q.empty()) and time.monotonic() < deadline:
+            time.sleep(0.05)
         self._running = False
         if self._haptic_thread is not None:
-            self._haptic_thread.join(timeout=2)     # let the last pattern finish
+            self._haptic_thread.join(timeout=1)
         if self.dm is not None:
             # Blocking here on purpose: disconnect() fails any command still
             # waiting for its reply, which prints a scary but harmless
@@ -212,10 +219,17 @@ class LegoPaddle:
                 if kind == "tick":
                     s = max(0.0, min(1.0, strength))
                     pulse(TICK_MS_FAR + s * (TICK_MS_NEAR - TICK_MS_FAR), TICK_DUTY)
-                elif kind == "start":
-                    self.dm.light_color(le.LEGO_COLOR_GREEN, blocking=False)
-                    self.dm.beep(pattern=le.SOUND_PATTERN_BEEP_UP_MIDDLE_DOWN, blocking=False)
-                    pulse(START_MS)
+                elif kind in ("start", "end"):
+                    if kind == "start":
+                        self.dm.light_color(le.LEGO_COLOR_GREEN, blocking=False)
+                        self.dm.beep(pattern=le.SOUND_PATTERN_BEEP_UP_MIDDLE_DOWN, blocking=False)
+                    else:
+                        self.dm.beep(pattern=le.SOUND_PATTERN_BEEP_TRIPLE, blocking=False)
+                    for i in range(WOBBLE_N):
+                        pulse(WOBBLE_MS, 100 if i % 2 == 0 else -100)
+                        time.sleep(WOBBLE_GAP_MS / 1000)
+                    if kind == "end":
+                        self.dm.light_color(le.LEGO_COLOR_NOCOLOR, blocking=False)
                 elif kind == "hit":
                     pulse(HIT_MS)
                 elif kind == "sweet":

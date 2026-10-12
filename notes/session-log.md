@@ -473,3 +473,9 @@ real bugs plus a round of feature requests.
 
   The rumble floor is 0.17 s between ticks. Swing per pulse varies run to run (2–54° for ticks), depending on where the weight rests relative to gravity. Pulse length matters more than duty, because of the ramp.
 - The shutdown warning came back with non-blocking duty commands (some replies never arrive). `LegoPaddle._cancel_unanswered()` cancels pending reply futures before `disconnect()`. It uses the library's private `_pending_responses`, best-effort only.
+
+## Ping-pong: start/end wobble — 2026-10-12
+
+- Sam's feel check: the approach rumble builds nicely, and hit vs. sweet spot are "just different enough". But the start pulse felt too much like hit/sweet.
+- Start and end are now the same **big wobble**: 4 × 100% duty for 260 ms, alternating direction, 110 ms gaps. On hardware it swings the weight across ~340–440° with 4 direction changes, about 3× the miss wobble's range (~145°). Start adds a rising beep + green light; end adds a triple beep + light off.
+- The game had no real "end" (a miss just re-serves), so **end** = quitting (`q`/Esc/Ctrl-C) or switching level mid-game. `LegoPaddle.stop()` now waits up to 3 s for queued haptics to finish, so the end wobble plays before disconnecting. A lives/game-over mode is an option if Sam wants a real end.

@@ -101,10 +101,10 @@ def haptics_demo(paddle):
         paddle.haptic("tick", strength=i / 6)
         time.sleep(gap)
     time.sleep(0.5)
-    for kind in ["hit", "sweet", "miss", "start"]:
+    for kind in ["hit", "sweet", "miss", "start", "end"]:
         print(f"  {kind}")
         paddle.haptic(kind)
-        time.sleep(2.0)
+        time.sleep(2.5)
 
 
 def main():

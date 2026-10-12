@@ -21,18 +21,19 @@ Keys: q/Esc quit, c recalibrate, p pause, 1/2/3 pick a level without a tag.
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
 from collections import deque
 
 import cv2
-import numpy as np
 
-from game import HIT_Y, BALL_R, LEVELS, Game
+from game import LEVELS, Game
 from paddles import KeyboardPaddle, LegoPaddle
 from swing import SwingDetector
-from vision import PoseTracker, TagReader, open_camera
+from ui import Renderer
+from vision import PoseTracker, TagReader, VisionWorker, open_camera
 
 TOPIC = "ME193/Rogers/Sam"
 CALIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paddle_calib.json")
@@ -46,24 +47,8 @@ RUMBLE_START = 1.0
 RUMBLE_SLOW, RUMBLE_FAST = 0.45, 0.17
 PAUSE_TAG = 0
 
-WIN_W, WIN_H = 1000, 720
-COURT = (20, 20, 600, 680)          # x, y, w, h in window pixels
-SIDE_X = 650
-PREVIEW_W, PREVIEW_H = 330, 248
-
-# colors (BGR)
-BG = (28, 24, 22)
-TABLE = (92, 60, 18)
-LINE = (235, 235, 235)
-WALL = (70, 70, 200)
-BALL = (40, 200, 255)
-PADDLE = (90, 210, 90)
-PADDLE_OFF = (110, 110, 110)
-SWING = (255, 255, 255)
-TEXT = (235, 235, 235)
-DIM = (150, 150, 150)
-BAD = (80, 80, 240)
-GOOD = (120, 230, 120)
+FPS = 60                # drawing rate; the camera + pose run at their own ~30
+PADDLE_EASE = 0.045     # s; the drawn paddle glides toward each new pose reading
 
 
 # ---------------------------------------------------------------------------
@@ -78,13 +63,15 @@ class Scoreboard:
         self.topic = topic
         self.client = None
         self.status = "off"
+        self.ok = False
         if not enabled:
             return
         try:
             from mqttlib import MQTTClient
             self.client = MQTTClient()
             self.client.connect(timeout=5)
-            self.status = f"-> {topic}"
+            self.status = topic
+            self.ok = True
         except Exception as e:
             print(f"MQTT unavailable ({e}); playing offline.")
             self.client = None
@@ -97,100 +84,11 @@ class Scoreboard:
             self.client.publish(self.topic, str(float(record)))
         except Exception as e:
             self.status = f"error: {e}"
+            self.ok = False
 
     def close(self):
         if self.client is not None:
             self.client.disconnect()
-
-
-# ---------------------------------------------------------------------------
-# Drawing
-# ---------------------------------------------------------------------------
-
-def to_px(x, y):
-    cx, cy, cw, ch = COURT
-    return int(cx + x * cw), int(cy + y * ch)
-
-
-def text(img, s, org, scale=0.6, color=TEXT, thick=1, center=False):
-    if center:
-        (w, h), _ = cv2.getTextSize(s, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
-        org = (org[0] - w // 2, org[1] + h // 2)
-    cv2.putText(img, s, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, thick, cv2.LINE_AA)
-
-
-def draw_court(img, game, paddle_x, swing_flash, trail, now):
-    cx, cy, cw, ch = COURT
-    cv2.rectangle(img, (cx, cy), (cx + cw, cy + ch), TABLE, -1)
-    cv2.rectangle(img, (cx, cy), (cx + cw, cy + ch), LINE, 2)
-    cv2.line(img, (cx + cw // 2, cy), (cx + cw // 2, cy + ch), (130, 100, 60), 1)
-    # the wall / opponent
-    cv2.rectangle(img, (cx, cy), (cx + cw, cy + 14), WALL, -1)
-    text(img, "WALL", (cx + cw // 2, cy + 30), 0.5, DIM, center=True)
-    # hitting line
-    y = to_px(0, HIT_Y)[1]
-    for x0 in range(cx, cx + cw, 20):
-        cv2.line(img, (x0, y), (min(x0 + 10, cx + cw), y), DIM, 1)
-
-    # ball trail + ball
-    r = max(4, int(BALL_R * cw))
-    for i, (bx, by) in enumerate(trail):
-        fade = (i + 1) / (len(trail) + 1)
-        cv2.circle(img, to_px(bx, min(by, 1.0)), int(r * fade), tuple(int(c * fade) for c in BALL), -1)
-    if game.in_play:
-        cv2.circle(img, to_px(game.x, min(game.y, 1.0)), r, BALL, -1, cv2.LINE_AA)
-
-    # paddle
-    half = game.level.paddle_w / 2
-    seen = paddle_x is not None
-    px = paddle_x if seen else 0.5
-    color = SWING if now - swing_flash < 0.15 else (PADDLE if seen else PADDLE_OFF)
-    p0, p1 = to_px(px - half, HIT_Y + 0.008), to_px(px + half, HIT_Y + 0.03)
-    cv2.rectangle(img, p0, p1, color, -1)
-    sweet = game.level.paddle_w * 0.25 / 2
-    cv2.line(img, to_px(px - sweet, HIT_Y + 0.03), to_px(px + sweet, HIT_Y + 0.03), GOOD if seen else DIM, 3)
-    if not seen:
-        text(img, "hand not visible", to_px(0.5, HIT_Y + 0.07), 0.55, BAD, center=True)
-
-
-def draw_preview(img, frame, pose, tags, now):
-    view = cv2.flip(frame, 1)
-    h, w = view.shape[:2]
-    for tag_id, quad in tags.visible:
-        q = quad.copy()
-        q[:, 0] = w - q[:, 0]
-        cv2.polylines(view, [q.astype(np.int32)], True, (0, 255, 255), 3)
-        c = q.mean(axis=0).astype(int)
-        text(view, f"tag {tag_id}", (c[0] - 30, c[1]), 0.8, (0, 255, 255), 2)
-    if pose.wrist_px is not None:
-        cv2.circle(view, pose.wrist_px, 14, PADDLE, 3)
-    small = cv2.resize(view, (PREVIEW_W, PREVIEW_H))
-    img[20:20 + PREVIEW_H, SIDE_X:SIDE_X + PREVIEW_W] = small
-    cv2.rectangle(img, (SIDE_X, 20), (SIDE_X + PREVIEW_W, 20 + PREVIEW_H), DIM, 1)
-    held = tags.progress(now)
-    if held is not None:
-        tag_id, frac = held
-        y = 20 + PREVIEW_H + 6
-        cv2.rectangle(img, (SIDE_X, y), (SIDE_X + int(PREVIEW_W * frac), y + 6), (0, 255, 255), -1)
-
-
-def draw_hud(img, game, state, paddle, detector, board, note):
-    x, y = SIDE_X, 20 + PREVIEW_H + 40
-    lv = game.level
-    text(img, f"Level: {lv.name}", (x, y), 0.7)
-    text(img, f"Streak: {game.streak}", (x, y + 45), 1.1, GOOD, 2)
-    text(img, f"Record: {game.record}", (x, y + 90), 1.1, BALL, 2)
-    text(img, f"Ball speed: {game.speed:.2f}" if game.in_play else "Ball speed: -", (x, y + 122), 0.55, DIM)
-    rate = getattr(paddle, "sample_rate", 0.0)
-    text(img, f"Paddle: {paddle.name}", (x, y + 178), 0.5, DIM)
-    thr = "-" if detector.threshold is None else f"{detector.threshold:.0f}"
-    text(img, f"IMU {rate:.0f} Hz   swing threshold {thr}", (x, y + 201), 0.5, DIM)
-    text(img, f"MQTT {board.status}", (x, y + 224), 0.5, DIM)
-    if note:
-        text(img, note, (x, y + 262), 0.6, note_color(note))
-    spin = game.last_hit["spin"] if game.last_hit else 0.0
-    text(img, f"Last spin: {spin_label(spin)}", (x, y + 145), 0.55, DIM)
-    text(img, "q quit  c recalibrate  p pause", (x, WIN_H - 20), 0.45, DIM)
 
 
 def spin_label(spin):
@@ -204,19 +102,6 @@ def rumble_interval(time_to_paddle):
     if time_to_paddle is None or time_to_paddle > RUMBLE_START:
         return None
     return RUMBLE_FAST + (RUMBLE_SLOW - RUMBLE_FAST) * time_to_paddle / RUMBLE_START
-
-
-def note_color(note):
-    return BAD if note.startswith("Miss") else GOOD
-
-
-def banner(img, lines):
-    cx, cy, cw, ch = COURT
-    overlay = img.copy()
-    cv2.rectangle(overlay, (cx + 40, cy + ch // 2 - 110), (cx + cw - 40, cy + ch // 2 + 110), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, 0.65, img, 0.35, 0, img)
-    for i, (s, scale) in enumerate(lines):
-        text(img, s, (cx + cw // 2, cy + ch // 2 - 70 + i * 50), scale, TEXT, 2 if scale > 0.8 else 1, center=True)
 
 
 # ---------------------------------------------------------------------------
@@ -278,18 +163,22 @@ def main():
     cap = open_camera(args.camera)
     pose = PoseTracker(hand=args.hand, reach=args.reach)
     tags = TagReader()
+    vision = VisionWorker(cap, pose, tags)
+    vision.start()
     detector = SwingDetector(k=args.k, min_threshold=args.min_threshold)
     board = Scoreboard(args.topic, enabled=not args.no_mqtt)
     game = Game(LEVELS[1])
+    ui = Renderer()
 
     state = "WAIT_TAG"
     state_t = time.monotonic()
     last_t = state_t
-    swing_flash = -1.0
+    swing_flash = -10.0
     last_tick = -1.0
     twist_vec = load_twist_axis(args)
-    note, note_t = "", 0.0
-    trail = deque(maxlen=10)
+    trail = deque(maxlen=18)
+    paddle_draw_x = 0.5             # eased paddle position (also what the hit rule uses)
+    key = 255
 
     def go(new_state, now):
         nonlocal state, state_t
@@ -307,17 +196,19 @@ def main():
     cv2.namedWindow("Ping-pong", cv2.WINDOW_AUTOSIZE)
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
-                print("Camera stopped delivering frames.", file=sys.stderr)
-                break
             now = time.monotonic()
-            dt = min(now - last_t, 0.05)    # a slow frame shouldn't teleport the ball
+            dt = min(now - last_t, 0.05)    # a hiccup shouldn't teleport the ball
             last_t = now
+            if vision.error:
+                print(vision.error, file=sys.stderr)
+                break
 
             # --- sensors -------------------------------------------------------
-            paddle_x = pose.update(frame)
-            tag = tags.update(frame, now)
+            frame, target_x, wrist_px, visible, tag_events = vision.snapshot()
+            if target_x is not None:
+                paddle_draw_x += (target_x - paddle_draw_x) * (1 - math.exp(-dt / PADDLE_EASE))
+            paddle_x = paddle_draw_x if target_x is not None else None
+            tag = tag_events[-1] if tag_events else None
             for t, mag, gyro in paddle.poll():
                 if state == "CALIBRATE":
                     detector.add_calibration(mag)
@@ -326,7 +217,6 @@ def main():
                     if state == "RALLY":
                         game.add_swing(swing)
 
-            key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
             paddle.on_key(key)
@@ -358,17 +248,14 @@ def main():
                     if event[0] == "hit":
                         paddle.haptic("sweet" if event[1]["sweet"] else "hit")
                         board.publish(game.record)
-                        note = "Sweet spot!" if event[1]["sweet"] else "Hit!"
-                        if event[1]["spin"]:
-                            note += f"  curve {spin_label(event[1]['spin'])}"
-                        note_t = now
+                        ui.add_hit(game.x, event[1]["sweet"], event[1]["spin"], now)
                     elif event[0] == "miss":
                         paddle.haptic("miss")
                         board.publish(game.record)
-                        note, note_t = f"Miss: {event[1]}", now
+                        ui.add_miss(event[1], now)
                         trail.clear()
                 if game.in_play:
-                    trail.append((game.x, game.y))
+                    trail.append((game.x, min(game.y, 1.0)))
                 tta = game.time_to_paddle()
                 gap = rumble_interval(tta)
                 if not args.no_rumble and gap is not None and now - last_tick >= gap:
@@ -376,30 +263,30 @@ def main():
                     last_tick = now
 
             # --- draw -----------------------------------------------------------
-            img = np.full((WIN_H, WIN_W, 3), BG, np.uint8)
-            draw_court(img, game, paddle_x, swing_flash, trail, now)
-            draw_preview(img, frame, pose, tags, now)
-            draw_hud(img, game, state, paddle, detector, board, note if now - note_t < 1.5 else "")
-            if state == "WAIT_TAG":
-                banner(img, [("Show an AprilTag to start", 0.9),
-                             ("tag 1 = easy   tag 2 = medium   tag 3 = hard", 0.6),
-                             ("tag 0 = pause", 0.55)])
-            elif state == "CALIBRATE":
-                left = max(0.0, CALIBRATE_S - (now - state_t))
-                banner(img, [("Hold the paddle still", 0.9), (f"calibrating swing sensor... {left:.1f}", 0.6)])
-            elif state == "COUNTDOWN":
-                n = int(COUNTDOWN_S - (now - state_t)) + 1
-                banner(img, [(f"{game.level.name}", 0.9), (f"{n}", 1.6),
-                             ("move your hand to move the paddle, swing to hit", 0.55)])
-            elif state == "PAUSED":
-                banner(img, [("Paused", 1.0), ("show tag 0 (or p) to resume", 0.6)])
+            img = ui.draw({
+                "now": now, "state": state, "state_t": state_t,
+                "calibrate_s": CALIBRATE_S, "countdown_s": COUNTDOWN_S,
+                "game": game, "trail": list(trail),
+                "paddle_x": paddle_draw_x, "paddle_seen": paddle_x is not None,
+                "swing_age": now - swing_flash,
+                "frame": frame, "wrist_px": wrist_px, "tags_visible": visible,
+                "tag_progress": tags.progress(now), "pose_ok": target_x is not None,
+                "paddle_name": paddle.name, "imu_rate": getattr(paddle, "sample_rate", 0.0),
+                "threshold": "–" if detector.threshold is None else f"{detector.threshold:.0f}",
+                "mqtt_status": board.status, "mqtt_ok": board.ok,
+            })
             cv2.imshow("Ping-pong", img)
+            key = cv2.waitKey(1) & 0xFF
+            spare = 1 / FPS - (time.monotonic() - now)
+            if spare > 0:
+                time.sleep(spare)
     except KeyboardInterrupt:
         pass
     finally:
-        print(f"Record streak: {game.record}")
+        print(f"Record streak: {game.record}  (sweet-spot streak record: {game.sweet_record})")
         if state in ("RALLY", "PAUSED"):
             paddle.haptic("end")            # stop() waits for it to play
+        vision.stop()
         cap.release()
         cv2.destroyAllWindows()
         pose.close()

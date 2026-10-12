@@ -163,3 +163,19 @@ def test_time_to_paddle_only_when_ball_is_coming():
     assert math.isclose(g.time_to_paddle(), 1.0)
     g.vy = -0.5
     assert g.time_to_paddle() is None
+
+
+def test_sweet_streak_counts_consecutive_sweet_hits_only():
+    g = ball_about_to_cross()
+    t = 0.0
+    edge = 0.5 + LEVELS[2].paddle_w / 2 * 0.8
+    for x in (0.5, 0.5, edge, 0.5):            # sweet, sweet, edge, sweet
+        g.x, g.y, g.vx, g.vy = x, HIT_Y - 0.01, 0.0, 0.5
+        g.add_swing(Swing(t=t))
+        run(g, t, 0.5, seconds=0.1)
+        t += 1.0
+    assert g.streak == 4
+    assert g.sweet_streak == 1 and g.sweet_record == 2
+    g.x, g.y, g.vx, g.vy = 0.5, HIT_Y - 0.01, 0.0, 0.5
+    run(g, t, 0.5)                              # miss
+    assert g.sweet_streak == 0 and g.sweet_record == 2

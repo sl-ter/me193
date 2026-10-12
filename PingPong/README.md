@@ -11,6 +11,7 @@ the paddle pushes back with haptic feedback, which we haven't done before.
 | **Pose** (MediaPipe Pose Landmarker, as in PoseRaceCar) | Puts the paddle where your hand is. Your wrist's left-right position in the camera becomes the paddle's position on the court | `vision.py` `PoseTracker` |
 | **IMU** (Double Motor gyro, as in SillyWalks) | Tells whether you're actually swinging. Gyro magnitude \|ω\| spikes past a calibrated threshold | `swing.py` `SwingDetector`, `paddles.py` `LegoPaddle` |
 | **AprilTags** (36h11 via `cv2.aruco`, as in AprilTagCentering) | Hold up tag 1, 2 or 3 for ~0.6 s to choose easy/medium/hard (ball speed, speed-up per hit, paddle width) and start the game. Tag 0 pauses | `vision.py` `TagReader`, levels in `game.py` |
+| **Sweet-spot streak** | Consecutive hits on the sweet spot (the middle quarter of the paddle), plus the best ever. A hit off the sweet spot, or a miss, resets it | `game.py`, shown in azure in the sidebar |
 | **MQTT** (`mqttlib.py`, as in MQTTIntro) | After every hit and miss, publishes the **record number of continuous hits** as a float (`"7.0"`) to `ME193/Rogers/Sam` | `pong.py` `Scoreboard` |
 | **Hardware programming** (`legoeducation` over BLE) | The IMU stream is raised from 10 Hz to 50 Hz, and the motor is used as a vibration motor | `paddles.py` |
 | **New: haptics** | An off-center LEGO weight on one motor output, driven with raw duty-cycle pulses (tuned with `haptic_lab.py`). A light **approach rumble** builds as the ball comes in. **Contact** is a ~140° swing of the weight; the **sweet spot** is a longer ~300° swing plus an azure light. A **miss** is three medium pulses alternating direction, plus a red light. The game is bookended by a **big wobble**: 4 full-power alternating pulses at the start (rising beep, green light) and at the end, when you quit or switch level (triple beep) | `paddles.py` `_haptic_loop`, rumble timing in `pong.py` |
@@ -91,7 +92,8 @@ The Double Motor already has the IMU, the battery, the radio and a motor in one 
 
 ## Files
 
-- `pong.py`: main loop, state machine (`WAIT_TAG → CALIBRATE → COUNTDOWN → RALLY ⇄ PAUSED`), rendering, MQTT scoreboard.
+- `ui.py`: all the drawing. Look: broadcast sports graphics. Dark ink background, a competition-blue table, one warm accent (the orange of a real ball) for the ball and the best score, azure for sweet-spot things (matching the paddle's light), red only for misses. Type is SF Pro via OpenCV 5's TrueType support: small tracked uppercase labels and big numbers that pop when they go up. The static layer is cached, so a frame takes ~5 ms.
+- `pong.py`: main loop (draws at 60 fps while `vision.VisionWorker` runs camera, pose and tags at ~30 on its own thread; the paddle eases between pose readings), state machine (`WAIT_TAG → CALIBRATE → COUNTDOWN → RALLY ⇄ PAUSED`), rendering, MQTT scoreboard.
 - `game.py`: pure game logic (ball, levels, hit rule, streak/record). Tested in `tests/test_game.py`.
 - `swing.py`: swing detection from gyro magnitude. Tested in `tests/test_swing.py`.
 - `vision.py`: pose wrist tracker, AprilTag reader, camera opener (from CustomRobotCentering).

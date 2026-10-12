@@ -8,9 +8,12 @@ TagReader    AprilTag 36h11 via cv2.aruco (as in AprilTagCentering), extended
              purpose (~0.6 s) before it counts.
 open_camera  copied from CustomRobotCentering/common.py: prefers the laptop
              camera over a nearby iPhone and checks it really gives frames.
+VisionWorker runs camera + pose + tags on a background thread, so the game
+             can draw at ~60 fps while the camera delivers ~30.
 """
 
 import os
+import threading
 import time
 import urllib.request
 
@@ -31,7 +34,7 @@ FRAME_W, FRAME_H = 640, 480
 # ---------------------------------------------------------------------------
 
 class PoseTracker:
-    def __init__(self, hand="right", reach=0.7, smoothing=0.6, min_visibility=0.5):
+    def __init__(self, hand="right", reach=0.7, smoothing=0.75, min_visibility=0.5):
         """hand: the player's paddle hand. reach: how much of the camera's
         width maps onto the full court (smaller = less arm movement needed).
         smoothing: EMA weight on the newest reading (1 = no smoothing)."""
@@ -182,3 +185,61 @@ def open_camera(index=None):
     raise RuntimeError("No camera delivered frames. Check System Settings -> "
                        "Privacy & Security -> Camera for your terminal app "
                        "(use Terminal.app or iTerm2, not the VS Code terminal).")
+
+
+# ---------------------------------------------------------------------------
+# Background worker
+# ---------------------------------------------------------------------------
+
+class VisionWorker:
+    """Reads the camera and runs pose + tag detection on its own thread.
+    The game loop reads the latest results without ever waiting on the
+    camera, which is what lets it draw at its own (higher) frame rate."""
+
+    def __init__(self, cap, pose, tags):
+        self.cap, self.pose, self.tags = cap, pose, tags
+        self.frame = None
+        self.paddle_x = None
+        self.wrist_px = None
+        self.visible = []
+        self.fps = 0.0
+        self.error = None
+        self._tag_events = []
+        self._lock = threading.Lock()
+        self._running = False
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        self._thread.join(timeout=2)
+
+    def _loop(self):
+        n, t0 = 0, time.monotonic()
+        while self._running:
+            ok, frame = self.cap.read()
+            if not ok:
+                self.error = "Camera stopped delivering frames."
+                break
+            now = time.monotonic()
+            paddle_x = self.pose.update(frame)
+            fired = self.tags.update(frame, now)
+            with self._lock:
+                self.frame = frame
+                self.paddle_x = paddle_x
+                self.wrist_px = self.pose.wrist_px
+                self.visible = list(self.tags.visible)
+                if fired is not None:
+                    self._tag_events.append(fired)
+            n += 1
+            if now - t0 >= 1.0:
+                self.fps, n, t0 = n / (now - t0), 0, now
+
+    def snapshot(self):
+        """(frame, paddle_x, wrist_px, visible tags, tag IDs fired since last call)."""
+        with self._lock:
+            events, self._tag_events = self._tag_events, []
+            return self.frame, self.paddle_x, self.wrist_px, self.visible, events

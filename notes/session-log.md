@@ -479,3 +479,27 @@ real bugs plus a round of feature requests.
 - Sam's feel check: the approach rumble builds nicely, and hit vs. sweet spot are "just different enough". But the start pulse felt too much like hit/sweet.
 - Start and end are now the same **big wobble**: 4 × 100% duty for 260 ms, alternating direction, 110 ms gaps. On hardware it swings the weight across ~340–440° with 4 direction changes, about 3× the miss wobble's range (~145°). Start adds a rising beep + green light; end adds a triple beep + light off.
 - The game had no real "end" (a miss just re-serves), so **end** = quitting (`q`/Esc/Ctrl-C) or switching level mid-game. `LegoPaddle.stop()` now waits up to 3 s for queued haptics to finish, so the end wobble plays before disconnecting. A lives/game-over mode is an option if Sam wants a real end.
+
+## Ping-pong: UI redesign, 60 fps, sweet-spot streak — 2026-10-12
+
+- First real game went well. The haptics were good.
+- Sam asked for a smoother, more modern UI that's "sleek and effective", not generic vibe-coded, keeping every existing element. Sam also asked for a sweet-spot streak counter.
+- **Sweet-spot streak**: `Game.sweet_streak` / `sweet_record`. It counts consecutive sweet-spot hits; a non-sweet hit, a miss, or a level change resets it. Tested.
+- **Smoothness**:
+  - New `vision.VisionWorker` runs camera + MediaPipe + tags on a background thread.
+  - `pong.py` draws at 60 fps and eases the paddle toward each pose reading (time constant 45 ms). The eased position is also what the hit rule uses, so what you see is what counts. Pose EMA was loosened from 0.6 to 0.75 to make up for the extra easing.
+  - The bot run through the real `main()` measured ~52 fps average, including startup.
+- **New `ui.py`** (all drawing moved out of `pong.py`):
+  - Look: broadcast sports graphics. Ink #0A0C0F background, competition-blue table gradient + vignette, white lines.
+  - One accent, ball orange #FF8A3D, for the ball and the best score. Azure #3FC5F0 for sweet-spot things (matches the paddle's light). Red only for misses.
+  - Type: **OpenCV 5's `cv2.FontFace` loads `/System/Library/Fonts/SFNS.ttf` (a variable font, weights 100–1000)**. Hershey is the fallback if it's missing.
+  - Elements:
+    - Tracked uppercase labels; numbers pop when they go up.
+    - Ball: shadow + highlight. The trail fades into the table.
+    - Paddle: ivory capsule with an azure sweet-spot band and a crisp outline flash on a swing.
+    - An expanding ring at contact; toasts that drift up and fade; the hit line flashes red on a miss.
+    - Camera card: rounded, with a pose status chip, tag outlines + labels, and a hold-progress bar.
+    - Stats card: streak/best, sweet-spot streak + best, level pill, speed and spin meters, Paddle/IMU/MQTT status dots.
+    - Keycap footer.
+    - Modal cards over a blurred table. The start screen's level chip fills while that tag is held; calibration and countdown have progress rings.
+  - The static layer is cached, so rally frames take ~4.4 ms and overlay frames ~5.5 ms. Re-masking the overlay blur was restricted to the 4 rounded corners after it took 11.6 ms over the whole table.

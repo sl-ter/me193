@@ -64,6 +64,8 @@ class Game:
         self.level = level
         self.streak = 0
         self.record = 0
+        self.sweet_streak = 0       # consecutive sweet-spot hits
+        self.sweet_record = 0
         self.x = self.y = 0.5
         self.vx = self.vy = 0.0
         self.spin = 0.0             # -1..1; + curves the ball to the right
@@ -80,6 +82,7 @@ class Game:
         otherwise), but the record stands."""
         self.level = level
         self.streak = 0
+        self.sweet_streak = 0
         self.in_play = False
         self.serve_at = None
 
@@ -186,12 +189,16 @@ class Game:
         self.swings.remove(swing)
         self.streak += 1
         self.record = max(self.record, self.streak)
+        # a hit off the sweet spot (or a miss) breaks the sweet-spot run
+        self.sweet_streak = self.sweet_streak + 1 if sweet else 0
+        self.sweet_record = max(self.sweet_record, self.sweet_streak)
         self.last_hit = {"offset": offset, "sweet": sweet, "power": swing.power,
                          "spin": self.spin, "t": now}
         return ("hit", self.last_hit)
 
     def _miss(self, now, reason):
         self.streak = 0
+        self.sweet_streak = 0
         self.in_play = False
         self.crossing = None
         self.serve_at = now + SERVE_DELAY

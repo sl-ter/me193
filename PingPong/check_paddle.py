@@ -5,19 +5,27 @@ Check the Double Motor paddle before playing. Three steps:
   1. Still + swing: live gyro x/y/z and magnitude, plus the notification rate.
      The resting vs. swinging magnitudes tell you whether pong.py's default
      --min-threshold (50) suits these raw units.
-  2. Twist test: twist the paddle to the RIGHT (clockwise, like turning a
-     doorknob) a few times. The axis that moves most is the twist axis, and
-     its sign is set so right-twist = curve right. Prints the pong.py flags.
+  2. Twist test: from a neutral grip, twist the paddle to the RIGHT
+     (clockwise, like turning a doorknob) and back, a few times. Finds the
+     twist axis (any direction, see swing.find_twist_axis), signed so a
+     right twist curves the ball right.
   3. --haptics: plays each pattern (rumble ticks slow -> fast, contact kick,
      sweet-spot kick, miss) so you can feel them and tune paddles.py.
+
+Steps 1-2 are saved to paddle_calib.json, which pong.py loads automatically.
 
   venv/bin/python check_paddle.py [--haptics] [--card-color orange --card-serial 0994]
 """
 
 import argparse
+import json
+import os
 import time
 
 from paddles import LegoPaddle
+from swing import find_twist_axis
+
+CALIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paddle_calib.json")
 
 
 def read_for(paddle, seconds, show=True):
@@ -59,25 +67,37 @@ def main():
             print("  ! swings are small in these units: try pong.py --min-threshold "
                   f"{max(rest_peak * 2, swing_peak / 4):.0f}")
 
-        input("\n[2/3] Twist test: press Enter, then twist the paddle to the RIGHT\n"
-              "      (clockwise, like a doorknob) 3 times over 4 s, no big swing...")
-        twist = read_for(paddle, 4, show=False)
-        if twist:
-            axes = []
-            for i, name in enumerate("xyz"):
-                vals = [g[i] for _, _, g in twist]
-                biggest = max(vals, key=abs)
-                axes.append((abs(biggest), name, 1 if biggest > 0 else -1))
-            axes.sort(reverse=True)
-            for amp, name, sign in axes:
-                print(f"  axis {name}: peak {amp * sign:+.0f}")
-            amp, name, sign = axes[0]
-            print(f"\n  -> twist axis {name}, sign {sign:+d}. Play with:")
-            print(f"     venv/bin/python pong.py --twist-axis {name} --twist-sign {sign}")
-            if axes[1][0] > 0.7 * amp:
-                print("  ! two axes moved about equally: twist more purely and run it again")
+        calib = {
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "imu_rate_hz": round(paddle.sample_rate, 1),
+            "rest_peak": round(rest_peak, 1),
+            "swing_peak": round(swing_peak, 1),
+        }
 
-        if args.haptics:
+        input("\n[2/3] Twist test: hold the grip in its normal position, press Enter,\n"
+              "      then twist RIGHT (clockwise, like a doorknob) and back, 3 times\n"
+              "      over 4 s. Twist first, then return: the first move must be right...")
+        twist = read_for(paddle, 4, show=False)
+        try:
+            axis, purity = find_twist_axis([g for _, _, g in twist])
+        except ValueError as e:
+            print(f"  ! twist test failed ({e}): run it again and twist harder")
+        else:
+            print(f"  twist axis (x, y, z) = ({axis[0]:+.2f}, {axis[1]:+.2f}, {axis[2]:+.2f}), "
+                  f"purity {purity:.0%}")
+            if purity < 0.75:
+                print("  ! the twist was mixed with other motion: keep the arm still, "
+                      "rotate only the wrist, and run it again")
+            calib["twist_axis"] = [round(v, 4) for v in axis]
+            calib["twist_purity"] = round(purity, 3)
+
+        with open(CALIB_PATH, "w") as f:
+            json.dump(calib, f, indent=2)
+        print(f"\n  Saved {os.path.basename(CALIB_PATH)}; pong.py will use it automatically.")
+
+        if not args.haptics:
+            print("\n[3/3] Haptics skipped: run with --haptics to feel each pattern.")
+        else:
             print("\n[3/3] Haptics")
             print("  approach rumble (slow -> fast):")
             for gap in [0.40, 0.30, 0.22, 0.15, 0.10, 0.09, 0.09]:

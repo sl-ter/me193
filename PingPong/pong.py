@@ -12,13 +12,15 @@ Virtual ping-pong against a wall, with a LEGO Double Motor as the paddle.
 
 Run (from Terminal.app/iTerm2 -- the VS Code terminal loses camera permission):
   venv/bin/python pong.py                              # LEGO paddle, card orange 0994
-  venv/bin/python pong.py --twist-axis y --twist-sign -1   # from check_paddle.py's twist test
+  (run check_paddle.py first: it saves paddle_calib.json with the twist axis)
   venv/bin/python pong.py --paddle keyboard --no-mqtt  # no hardware: space/z/x = swing
 
 Keys: q/Esc quit, c recalibrate, p pause, 1/2/3 pick a level without a tag.
 """
 
 import argparse
+import json
+import os
 import sys
 import time
 from collections import deque
@@ -32,6 +34,7 @@ from swing import SwingDetector
 from vision import PoseTracker, TagReader, open_camera
 
 TOPIC = "ME193/Rogers/Sam"
+CALIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paddle_calib.json")
 CALIBRATE_S = 2.0
 COUNTDOWN_S = 3.0
 
@@ -227,10 +230,10 @@ def parse_args():
                    help="which Double Motor output has the off-center weight")
     p.add_argument("--no-haptics", action="store_true")
     p.add_argument("--no-rumble", action="store_true", help="keep contact/miss haptics, drop the approach rumble")
-    p.add_argument("--twist-axis", choices=["x", "y", "z"], default="x",
-                   help="gyro axis along the paddle handle (check_paddle.py finds it)")
+    p.add_argument("--twist-axis", choices=["x", "y", "z"], default=None,
+                   help="override paddle_calib.json with a single gyro axis")
     p.add_argument("--twist-sign", type=int, choices=[1, -1], default=1,
-                   help="-1 if twisting right curves the ball left")
+                   help="with --twist-axis: -1 if twisting right curves the ball left")
     p.add_argument("--hand", choices=["right", "left"], default="right", help="your paddle hand")
     p.add_argument("--reach", type=float, default=0.7,
                    help="fraction of the camera width that spans the whole court")
@@ -240,6 +243,24 @@ def parse_args():
     p.add_argument("--topic", default=TOPIC)
     p.add_argument("--no-mqtt", action="store_true")
     return p.parse_args()
+
+
+def load_twist_axis(args):
+    """The gyro direction that means "twist right": from --twist-axis if
+    given, else paddle_calib.json (written by check_paddle.py), else +x."""
+    if args.twist_axis is not None:
+        vec = [0.0, 0.0, 0.0]
+        vec["xyz".index(args.twist_axis)] = float(args.twist_sign)
+        return vec
+    if args.paddle == "lego" and os.path.exists(CALIB_PATH):
+        with open(CALIB_PATH) as f:
+            calib = json.load(f)
+        if "twist_axis" in calib:
+            print(f"Twist axis {calib['twist_axis']} from {os.path.basename(CALIB_PATH)}")
+            return calib["twist_axis"]
+    if args.paddle == "lego":
+        print("No paddle_calib.json: spin uses gyro x. Run check_paddle.py to calibrate.")
+    return [1.0, 0.0, 0.0]
 
 
 def main():
@@ -264,7 +285,7 @@ def main():
     last_t = state_t
     swing_flash = -1.0
     last_tick = -1.0
-    twist_i = "xyz".index(args.twist_axis)
+    twist_vec = load_twist_axis(args)
     note, note_t = "", 0.0
     trail = deque(maxlen=10)
 
@@ -296,7 +317,7 @@ def main():
             for t, mag, gyro in paddle.poll():
                 if state == "CALIBRATE":
                     detector.add_calibration(mag)
-                elif (swing := detector.update(t, mag, args.twist_sign * gyro[twist_i])) is not None:
+                elif (swing := detector.update(t, mag, sum(a * b for a, b in zip(gyro, twist_vec)))) is not None:
                     swing_flash = now
                     if state == "RALLY":
                         game.add_swing(swing)

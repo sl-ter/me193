@@ -69,3 +69,17 @@ def test_rumble_speeds_up_as_ball_approaches():
     assert pong.rumble_interval(pong.RUMBLE_START + 0.1) is None
     far, near = pong.rumble_interval(pong.RUMBLE_START), pong.rumble_interval(0.0)
     assert far == pong.RUMBLE_SLOW and near == pong.RUMBLE_FAST and near < far
+
+
+def test_twist_axis_found_off_axis_with_sign_from_first_motion():
+    import math
+    from swing import find_twist_axis
+    true = (-0.6, 0.8, 0.0)              # twist axis sits diagonally between x and y
+    gyros = []
+    for k in range(3):                   # right twist (+), then the return (-), x3
+        for w in (0, 150, 320, 150, 0, -120, -250, -120, 0):
+            noise = 10 * math.sin(len(gyros))
+            gyros.append((w * true[0], w * true[1] + noise, noise))
+    axis, purity = find_twist_axis(gyros)
+    assert sum(a * t for a, t in zip(axis, true)) > 0.99   # same direction, + sign
+    assert purity > 0.95

@@ -53,6 +53,7 @@ class LegoPaddle:
         self._haptic_q = queue.Queue()
         self._running = False
         self._busy = False
+        self._haptic_thread = None
         self.sample_rate = 0.0                # measured notifications per second
 
     # -- connection --------------------------------------------------------------
@@ -91,14 +92,21 @@ class LegoPaddle:
 
         self._running = True
         threading.Thread(target=self._sample_loop, daemon=True).start()
-        threading.Thread(target=self._haptic_loop, daemon=True).start()
+        self._haptic_thread = threading.Thread(target=self._haptic_loop, daemon=True)
+        self._haptic_thread.start()
 
     def stop(self):
         self._running = False
+        if self._haptic_thread is not None:
+            self._haptic_thread.join(timeout=2)     # let the last pattern finish
         if self.dm is not None:
+            # Blocking here on purpose: disconnect() fails any command still
+            # waiting for its reply, which prints a scary but harmless
+            # "Future exception was never retrieved ... Device disconnected".
             try:
                 self.dm.motor_stop(motor=self.le.MOTOR_BOTH)
-                self.dm.light_color(self.le.LEGO_COLOR_NOCOLOR, blocking=False)
+                self.dm.light_color(self.le.LEGO_COLOR_NOCOLOR)
+                time.sleep(0.1)
                 self.dm.disconnect()
             except Exception:
                 pass

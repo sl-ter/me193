@@ -32,8 +32,8 @@ Use Terminal.app or iTerm2. The VS Code terminal loses macOS camera permission.
 
 ```bash
 cd ~/Code/Projects/me193/PingPong
-venv/bin/python check_paddle.py --haptics          # check the paddle; prints your --twist-axis/--twist-sign
-venv/bin/python pong.py --twist-axis x --twist-sign 1   # use what check_paddle printed
+venv/bin/python check_paddle.py --haptics          # check + calibrate the paddle -> paddle_calib.json
+venv/bin/python pong.py                            # loads paddle_calib.json automatically
 venv/bin/python pong.py --paddle keyboard --no-mqtt   # no hardware: space = flat swing, z/x = twist left/right
 venv/bin/pytest tests
 ```
@@ -70,7 +70,7 @@ Useful flags:
 - **Gyro units.** The library gives raw int16 values with undocumented units. The threshold is calibrated relative to rest, so the units don't matter much, but `--min-threshold 50` is a guess. Run `check_paddle.py` to see the resting and swinging values.
 - **IMU rate.** It's requested at 20 ms intervals. `check_paddle.py` prints the rate actually achieved.
 - **Haptic feel.** The constants at the top of `paddles.py` are starting points to tune by feel: rumble tick 30 ms at 35%, contact kick 2 × 45 ms, sweet spot 2 × 30 ms, miss 3 × 180 ms. A 30 ms tick at 35% may be too weak to spin the weight at all; if so, raise `TICK_SPEED`.
-- **Twist axis.** It depends on how the Double Motor is mounted in the handle. `check_paddle.py` step 2 finds it.
+- **Twist axis.** It depends on how the Double Motor is mounted in the handle, and it usually doesn't line up with a single gyro axis. On Sam's mount (buttons down, top facing forward), it came out between y and x. `check_paddle.py` step 2 records a few twists, takes the main direction of the motion (PCA) as the twist axis, and takes its sign from the first move (the twist to the right). It saves the result to `paddle_calib.json`, which `pong.py` loads. Spin = (gyro · axis) / |gyro| at the swing's peak.
 - **Timing window.** If good swings register as late, increase `SWING_LATE` in `game.py`.
 
 ## Why the Double Motor and not the UNO Q

@@ -422,3 +422,11 @@ real bugs plus a round of feature requests.
   - A raw `bleak` scan saw 69 BLE devices but **zero** with LEGO's manufacturer ID 0x0397, so the Mac's Bluetooth works and the motor simply wasn't advertising.
   - No local process was holding it.
   - Likely cause: low battery (the red flashing), or it was still connected to another device. The card settings match SillyWalks/PoseRaceCar.
+
+## Ping-pong: paddle connected, twist axis by PCA — 2026-10-12
+
+- After charging, `check_paddle.py` connected (orange 0994), and steps 1–2 ran. The red flashing was the battery.
+- The twist test showed the mount (buttons/charging port down, the module's top facing forward) puts the twist **diagonally** between gyro axes: right-twist peaks were y +325, x −249, z +111. A single-axis pick loses part of the twist, and a peak-based sign can flip because a twist-and-return hits both signs.
+  - Replaced with `swing.find_twist_axis`: the principal component of the moving gyro samples, with its sign taken from the first strong movement (the right twist). Purity = share of motion on that axis; it warns below 75%.
+  - `check_paddle.py` now saves steps 1–2 (IMU rate, rest/swing peaks, twist axis, purity) to `PingPong/paddle_calib.json`, which `pong.py` loads automatically. `--twist-axis/--twist-sign` still override it.
+- The `Future exception was never retrieved ... Device disconnected unexpectedly` at exit was harmless. `disconnect()` fails any command still awaiting a reply, and `stop()` had just sent `light_color(blocking=False)`. `LegoPaddle.stop()` now joins the haptic thread and uses blocking calls before disconnecting. Step 3 only runs with `--haptics`, and the script now says when it's skipped.

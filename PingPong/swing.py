@@ -83,3 +83,35 @@ def spin_fraction(twist, mag):
     if mag <= 0:
         return 0.0
     return max(-1.0, min(1.0, twist / mag))
+
+
+def find_twist_axis(gyros):
+    """Work out the paddle's twist axis from a recording of the player
+    twisting it to the RIGHT (then back) a few times.
+
+    gyros: [(gx, gy, gz), ...] in time order. The motor body can sit at any
+    angle in the handle, so the twist won't line up with one gyro axis. The
+    axis is the direction the gyro vector swings along most: the principal
+    component of the moving samples. A back-and-forth twist hits both signs,
+    so the sign comes from the first strong movement, which is the twist to
+    the right. Returns (unit 3-vector, purity), where purity is the share of
+    the motion along that axis (1.0 = a perfectly clean twist).
+    """
+    import numpy as np
+
+    g = np.asarray(gyros, dtype=float)
+    if len(g) < 3:
+        raise ValueError("not enough samples")
+    mags = np.linalg.norm(g, axis=1)
+    moving = g[mags >= 0.3 * mags.max()]
+    if len(moving) < 2:
+        raise ValueError("no clear movement")
+    eigvals, eigvecs = np.linalg.eigh(moving.T @ moving)
+    axis = eigvecs[:, -1]
+    purity = float(eigvals[-1] / eigvals.sum())
+
+    proj = g @ axis
+    first = np.argmax(np.abs(proj) >= 0.5 * np.abs(proj).max())
+    if proj[first] < 0:
+        axis = -axis
+    return tuple(float(v) for v in axis), purity

@@ -48,7 +48,7 @@ Game flow:
 
 Keys: `q` quit, `c` recalibrate, `p` pause, and `1`/`2`/`3` choose a level when you don't have the printed tags.
 
-Print the tags with `../AprilTagCentering/generate_apriltag.py` (IDs 0–3).
+**Tag cards:** print [`tags/tags.pdf`](tags/tags.pdf) at 100% / Actual size, not Fit to page. It has 4 Letter pages: 0 pause, 1 easy, 2 medium, 3 hard, each 14 cm. Run `venv/bin/python make_tags.py --size-cm N` to remake them at another size. No printer? Open `tags/tagN.png` full-screen on your phone and hold that up instead, with the brightness turned up.
 
 Useful flags:
 - `--hand left`
@@ -96,5 +96,6 @@ The Double Motor already has the IMU, the battery, the radio and a motor in one 
 - `vision.py`: pose wrist tracker, AprilTag reader, camera opener (from CustomRobotCentering).
 - `paddles.py`: `LegoPaddle` (IMU sampling and haptics) and `KeyboardPaddle` (no hardware).
 - `check_paddle.py`: IMU check, twist-axis finder and haptics check.
+- `make_tags.py` → `tags/`: the printable AprilTag cards.
 - `mqttlib.py`: copy of the class MQTT wrapper.
 - `venv/` (Python 3.14) and `requirements.txt`. The pose model downloads to `models/` on first run.

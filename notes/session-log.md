@@ -414,3 +414,11 @@ real bugs plus a round of feature requests.
   - A stiff contact kick: 45 ms forward + 45 ms reverse at full power. The reversal makes it feel distinct from the buzz.
 - `KeyboardPaddle`: z/x = swing twisting left/right.
 - 23 tests pass. The headless bot run through `main()` showed spins ±0.8 reaching the ball, 39 rumble ticks, and kicks on hits. Still not run on real hardware.
+
+## Ping-pong: tag cards, first connect attempt — 2026-10-12
+
+- `PingPong/make_tags.py` writes `tags/tags.pdf`: 4 US Letter pages, 36h11 IDs 0–3, 14 cm, each labeled pause/easy/medium/hard. It also writes `tag0-3.png` for showing on a phone screen. Each page was checked: the game's own `TagReader` reads the right ID back at webcam scale.
+- First `check_paddle.py` run failed 3×: `Could not find device matching Card color 9, Card serial 0994`. The Double Motor was flashing red.
+  - A raw `bleak` scan saw 69 BLE devices but **zero** with LEGO's manufacturer ID 0x0397, so the Mac's Bluetooth works and the motor simply wasn't advertising.
+  - No local process was holding it.
+  - Likely cause: low battery (the red flashing), or it was still connected to another device. The card settings match SillyWalks/PoseRaceCar.

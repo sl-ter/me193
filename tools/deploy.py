@@ -190,11 +190,15 @@ def main():
     if len(sys.argv) < 2 or not sys.argv[1]:
         sys.exit("Open a file inside the app you want to run, then try again.")
 
-    local_app = Path(sys.argv[1]).parts[0]  # first folder = app name
-    app_dir = ROOT / local_app
-    if not (app_dir / "app.yaml").exists():
-        sys.exit(f"'{local_app}' doesn't look like an App (no app.yaml). "
+    # The app is the nearest folder with an app.yaml, from the given path up, so
+    # apps nested in an assignment folder (SumoWrestling/unoq/sumo-distance) work too.
+    path = (ROOT / sys.argv[1]).resolve()
+    app_dir = next((d for d in [path, *path.parents]
+                    if ROOT in d.parents and (d / "app.yaml").exists()), None)
+    if app_dir is None:
+        sys.exit(f"'{sys.argv[1]}' isn't inside an App (no app.yaml found). "
                  "Open a file inside an app folder.")
+    local_app = app_dir.name
     app = BOARD_APP_NAMES.get(local_app, local_app)
 
     board = find_board()

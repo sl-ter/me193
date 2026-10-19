@@ -503,3 +503,17 @@ real bugs plus a round of feature requests.
     - Keycap footer.
     - Modal cards over a blurred table. The start screen's level chip fills while that tag is held; calibration and countdown have progress rings.
   - The static layer is cached, so rally frames take ~4.4 ms and overlay frames ~5.5 ms. Re-masking the overlay blur was restricted to the 4 rounded corners after it took 11.6 ms over the whole table.
+
+## Added Sumo wrestling (HW5) — 2026-10-19
+
+- New `SumoWrestling/` folder: Mohammed Almheiri's `Mohammed's Projects/Sumo Wrestling/` from `github.com/mohdalmheiri/ME193-Robotics` (commit `57946e0`, 2026-10-18), copied in without git history. The code is unchanged. To pick up upstream changes, re-copy from GitHub.
+- What it does: a human drives with the LEGO Controller. A behavior tree on the laptop (`behavior_tree.py`, run by `sumo.py` at 20 Hz) checks OUT → NO_EDGE → EDGE_PUSH → EDGE → BOOST → DRIVE.
+  - The Color Sensor's hue/saturation detects the blue tape and blocks forward.
+  - An HC-SR04 on the UNO Q publishes distance to `ME193/Mohammed/sumo/distance`, and an opponent within 30 cm while charging gives full power.
+  - Enter in the terminal = "out" (sad trombone).
+  - LEGO parts pair with the orange 0994 card, the same as PingPong.
+- MQTT topics were left as `ME193/Mohammed/...` because the board app and `sumo.py` must match. Change `DISTANCE_TOPIC` in `sumo.py` and `TOPIC` in the board's `main.py` together if needed.
+- Own `SumoWrestling/venv` (Python 3.14) + the upstream `requirements.txt`, because it pins `legoeducation==1.2.0` ("works with our controller") and the root venv has 1.1.1. Verified: `test_behavior_tree.py` passes (19 checks), `sumo`/`sad_song` import, and the trombone WAV generates. No hardware was tested. Don't import `watch_distance.py` to test it, because it runs `loop_forever()` at import.
+- UNO Q app moved from upstream `unoq_app/` to `SumoWrestling/unoq/sumo-distance/`, the folder App Lab makes for "Sumo Distance".
+- `tools/deploy.py` used to take the first path component as the app, so nested apps couldn't deploy. It now walks up from the given path to the nearest folder with an `app.yaml` (within the repo) and uses that folder's name. Root-level apps behave as before. Also fixes `CustomRobotCentering/unoq/mqtt-minifig-car`, which now deploys directly as `mqtt-minifig-car`.
+- Not deployed: the board wasn't reachable (no adb; no answer at the `HOSTS` addresses), so it's unknown whether a sumo app is already on it and under what name. List `/home/arduino/ArduinoApps` before the first deploy, and add a `BOARD_APP_NAMES` mapping if it's not `sumo-distance`.

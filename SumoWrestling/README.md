@@ -2,7 +2,7 @@
 
 Mohammed Almheiri's HW5 code, from `Mohammed's Projects/Sumo Wrestling/` in
 [`mohdalmheiri/ME193-Robotics`](https://github.com/mohdalmheiri/ME193-Robotics/tree/main/Mohammed's%20Projects/Sumo%20Wrestling)
-(commit `57946e0`, 10/18), copied in without git history. The code is unchanged. Only this README was
+(commit `57946e0`, 10/18; synced to `b3b2dd9`, 10/19), copied in without git history. The code is unchanged. Only this README was
 adapted to this repo, and `unoq_app/` was renamed `unoq/sumo-distance/` so `tools/deploy.py` can deploy it.
 
 A human-driven LEGO sumo robot with shared control. You drive with the LEGO Controller; the robot
@@ -123,9 +123,11 @@ Read with `connect_test.py` on our ring:
 
 | Surface | Hue | Saturation |
 |---|---|---|
-| Floor | ~15-21 | ~30-38 |
-| Blue tape | ~206 | ~62-77 |
+| Floor | ~13-23 | ~29-41 |
+| Old blue tape | ~206 | ~62-77 |
+| New blue tape | ~208 | ~52-56 |
 
 Based on these, `sumo.py` uses `TAPE_MODE = "hue"` with
-`TAPE_HUE_RANGE = (180, 240)` and `TAPE_MIN_SATURATION = 55`. The tape is well inside the hue range
-and above the saturation cutoff, while the floor fails both checks.
+`TAPE_HUE_RANGE = (180, 240)` and `TAPE_MIN_SATURATION = 45`. The threshold was lowered from 55 because
+the new ring tape is less saturated. Both tapes are well inside the hue range and above the saturation
+cutoff. The floor fails the hue check by a wide margin, and its saturation stays below 45 too.

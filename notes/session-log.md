@@ -517,3 +517,8 @@ real bugs plus a round of feature requests.
 - UNO Q app moved from upstream `unoq_app/` to `SumoWrestling/unoq/sumo-distance/`, the folder App Lab makes for "Sumo Distance".
 - `tools/deploy.py` used to take the first path component as the app, so nested apps couldn't deploy. It now walks up from the given path to the nearest folder with an `app.yaml` (within the repo) and uses that folder's name. Root-level apps behave as before. Also fixes `CustomRobotCentering/unoq/mqtt-minifig-car`, which now deploys directly as `mqtt-minifig-car`.
 - Not deployed: the board wasn't reachable (no adb; no answer at the `HOSTS` addresses), so it's unknown whether a sumo app is already on it and under what name. List `/home/arduino/ArduinoApps` before the first deploy, and add a `BOARD_APP_NAMES` mapping if it's not `sumo-distance`.
+
+## Sumo wrestling: synced upstream tape threshold — 2026-10-19
+
+- After Sam's successful test run, pulled Mohammed's `b3b2dd9` ("Lower tape saturation threshold for new ring tape"). The new ring tape reads hue ~208, saturation ~52–56, so `TAPE_MIN_SATURATION` in `sumo.py` dropped from 55 to 45. The floor reads saturation ~29–41 and fails the hue check by a wide margin anyway. The README's measured-tape table was updated to match.
+- To sync again: re-clone `mohdalmheiri/ME193-Robotics`, diff `Mohammed's Projects/Sumo Wrestling/` against `SumoWrestling/` (its `unoq_app/` is our `unoq/sumo-distance/`), copy code files over, and patch README hunks so this repo's adaptations stay.

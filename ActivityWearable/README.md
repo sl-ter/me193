@@ -7,7 +7,7 @@ A wearable built from the UNO Q and an MPU-6050 IMU (GY-521 breakout) that tells
 
 Three classmates each try one activity live, so the models are trained on several people and tested on a person they haven't seen. The full plan lives in the Obsidian note `me193; ActivityWearable` (rubric, model choices, data plan, assembly steps).
 
-Status: **3 people recorded, both models trained** (2026-10-26). Held out (each person tested by a model trained on the others): **Model 1 80%, Model 2 99%**. Next: live classification on the board.
+Status: **3 people recorded, both models trained** (2026-10-26). Held out (each person tested by a model trained on the others): **Model 1 80%, Model 2 99%**. **Live mode works:** the board classifies every 0.5 s and `dashboard.html` shows both models side by side.
 
 ## Hardware and wiring
 
@@ -140,7 +140,37 @@ The board times each session itself and saves it to `data/` in its app folder, s
   - **Files:** writes `data/<person>_<activity>_<time>.csv` in the app folder, which the container mounts as `/app`.
   - **CSV format:** two `#` header lines (person, leg, activity, label, rates, axes), the columns `t_s,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps`, and an `# end` line with the row, gap and drop counts.
 
-### Network notes (2026-10-26)
+### Live demo
+
+1. Start the app as for recording (`UNOQ_HOST=<ip> python3 tools/deploy.py ActivityWearable/unoq/activity-wearable`). The board always classifies live; recording still works alongside it.
+2. Open the dashboard:
+   ```bash
+   open ActivityWearable/dashboard.html
+   ```
+   It's one HTML file. It loads `mqtt.js` 5.10.1 from jsDelivr and connects to `wss://broker.hivemq.com:8884/mqtt`, so it needs internet but no install. `dashboard.html?demo` shows made-up data for checking the layout without the board.
+
+**What the board does:**
+- Every 0.5 s it classifies the last 2 s with both models.
+- Each answer shown is the most common of the last 3 (1.5 s), so it doesn't flicker. The board publishes them on `ME193/Sam/wear/live`.
+- The LED matrix shows **Model 1's letter on the left and Model 2's on the right** (S/W/R/B).
+- Model 2 defaults to the random forest. The dashboard's Tree / Forest / KNN buttons switch it live by sending `{"cmd": "model2", "kind": ...}`.
+
+**What the dashboard shows:**
+
+| Part | Shows |
+|---|---|
+| Model 1 card | its answer, the +Y peak on a gauge coloured by the 3 thresholds, and one sentence saying why |
+| Model 2 card | its answer, the forest's vote for each class, posture (upright vs lying, the tree's own split at 0.94 g), shin swing (gyro X std), and steps/min or pedal rpm |
+| Banner | whether the models agree. When Model 1 says still and Model 2 says bike, it explains why one number can't tell them apart |
+| Timeline | the last 60 s of answers, Model 1 and Model 2 |
+| Signal chart | the raw +Y acceleration for the last 5 s, with the thresholds drawn on it |
+
+**Checked:**
+- Replaying recorded sessions through the board's `Live` class gave about 0.6 ms per answer on the laptop. On slow air-biking, Model 1 said still 87/87 times and Model 2 said bike 87/87.
+- The board publishes an answer every ~0.5 s, and the Model 2 switch round-trips.
+- The dashboard was screenshotted with headless Chrome: live, demo, light/dark, and 390 px wide (no sideways scroll).
+
+## Network notes (2026-10-26)
 
 - **Registration:** Tufts_Wireless only gives the board internet once its MAC is registered (`14:b5:cd:f7:fd:9b`; the `B6:28:…` address in older notes was a randomized one). Until then every connection is redirected to `device-registration-prod-04.it.tufts.edu`.
 - **The broker:** `test.mosquitto.org:1883` (the class default) times out from both Tufts_Wireless and Tufts Secure, so this project uses `broker.hivemq.com`.
@@ -213,6 +243,7 @@ Results, 2026-10-26: 1569 windows from SL, TEOROM and MAYA.
 | `record.py` | guided recording session (laptop) |
 | `pull_data.py` | copies sessions off the board into `data/` |
 | `train.py` | windows, leave-one-person-out evaluation, figures, `models.json` |
+| `dashboard.html` | live demo display (browser, MQTT over WebSockets) |
 | `figures/` | the figures + `results.json` |
 | `unoq/activity-wearable/` | the wearable's App Lab app (sketch + Python). `python/features.py` (windows + features) and `python/classify.py` (runs `models.json` with numpy only) are shared with `train.py`, so the laptop and the board compute features identically |
 | `unoq/imu-check/` | bench-check App Lab app (sketch + Python) |

@@ -1,9 +1,13 @@
-"""UNO Q - Linux side of the activity wearable (recording mode).
+"""UNO Q - Linux side of the activity wearable.
 
-Drains the sketch's 100 Hz IMU samples, saves recording sessions as CSV in
-data/ (this app's folder on the board, mounted at /app), streams samples and
-status over MQTT for the laptop (ActivityWearable/record.py), and shows the
-state on the LED matrix.
+Drains the sketch's 100 Hz IMU samples and does two jobs at once:
+- Live: every 0.5 s it classifies the last 2 s with both models (models.json,
+  trained by ActivityWearable/train.py) and publishes the answers for the
+  laptop dashboard. The LED matrix shows Model 1's letter on the left and
+  Model 2's on the right (S still, W walk, R run, B bike).
+- Recording: saves sessions as CSV in data/ (this app's folder on the board,
+  mounted at /app) for ActivityWearable/record.py, with the countdown and
+  progress on the matrix while it records.
 
 The laptop starts a session with a command on ME193/Sam/wear/cmd. The board
 then runs the countdown and the timed recording itself, so a session still
@@ -11,9 +15,11 @@ ends cleanly if Wi-Fi drops halfway down the hall.
 
 Topics (must match ActivityWearable/common.py):
   .../cmd     laptop -> board  {"cmd": "record", ...} / {"cmd": "stop"} / {"cmd": "ping"}
+                               / {"cmd": "model2", "kind": "tree" | "forest" | "knn"}
   .../status  board -> laptop  twice a second
   .../event   board -> laptop  recording / saved / aborted / error
   .../imu     board -> laptop  live samples, 10 messages a second
+  .../live    board -> laptop  both models' answers, twice a second
 """
 import json
 import os
@@ -27,6 +33,9 @@ import numpy as np
 import paho.mqtt.client as mqtt
 from arduino.app_utils import App, Bridge, Frame
 
+import classify
+import features as F
+
 BROKER = "broker.hivemq.com"   # test.mosquitto.org:1883 is unreachable from Tufts networks (2026-10-26)
 PORT = 1883
 TOPIC = "ME193/Sam/wear"
@@ -39,6 +48,8 @@ MAX_BATCH = 7               # must match the sketch
 LIVE_EVERY = 0.1            # seconds between live-sample messages
 STATUS_EVERY = 0.5
 SAVED_SHOW_S = 3.0          # how long the matrix shows the check mark
+SMOOTH = 3                  # live answer = most common of the last 3 (1.5 s), so it doesn't flicker
+MODELS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json")
 
 AXES_NOTE = "+Y up the shin (toward the knee), +Z forward out of the shin, +X to the wearer's left"
 COLUMNS = "t_s,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps"
@@ -222,6 +233,59 @@ class Session:
         print(("aborted " if aborted else "saved ") + json.dumps(stats), flush=True)
 
 
+# ---- Live classification ----------------------------------------------------
+class Live:
+    """Keeps the last 2 s of samples and classifies them every 0.5 s."""
+
+    def __init__(self):
+        self.models = classify.Models(MODELS_PATH) if os.path.exists(MODELS_PATH) else None
+        self.kind = self.models.m["model2_default"] if self.models else None
+        self.buf = deque(maxlen=F.WINDOW)
+        self.last_seq = None
+        self.since = 0
+        self.hist1, self.hist2 = deque(maxlen=SMOOTH), deque(maxlen=SMOOTH)
+        self.latest = None
+        print(f"live models: {'loaded, Model 2 = ' + self.kind if self.models else 'models.json missing'}", flush=True)
+
+    def add(self, samples):
+        """Feed new samples; returns True if a new answer is due."""
+        due = False
+        for seq, v in samples:
+            if self.last_seq is not None and seq != self.last_seq + 1:   # a gap: start the window over
+                self.buf.clear()
+                self.since = 0
+            self.last_seq = seq
+            self.buf.append(v)
+            self.since += 1
+            if len(self.buf) == F.WINDOW and self.since >= F.STEP:
+                self.since = 0
+                due = True
+        return due and self.models is not None
+
+    def classify(self, now):
+        w = np.array(self.buf)
+        m1, p1 = self.models.model1(w)
+        m2, p2 = self.models.model2(w, self.kind)
+        self.hist1.append(m1)
+        self.hist2.append(m2)
+        f = F.features(w)
+        m1cfg = self.models.m["model1"]
+        self.latest = {
+            "t": now, "seq": self.last_seq,
+            "m1": max(set(self.hist1), key=list(self.hist1).count), "m1_raw": m1,
+            "m1_direction": m1cfg["direction"], "m1_thresholds": m1cfg["thresholds_g"],
+            "m1_peak": round(F.peak(w, m1cfg["direction"]), 3),
+            "m2": max(set(self.hist2), key=list(self.hist2).count), "m2_raw": m2, "m2_kind": self.kind,
+            "m2_proba": {c: round(float(x), 3) for c, x in zip(self.models.classes, p2)},
+            "cadence_hz": round(f["cadence_hz"], 2), "cadence_share": round(f["cadence_share"], 2),
+            "acc_y_mean": round(f["acc_y_mean"], 3), "gyro_x_std": round(f["gyro_x_std"], 1),
+        }
+        return self.latest
+
+
+live_model = None
+
+
 # ---- Main loop --------------------------------------------------------------
 session = None
 imu_state = "?"
@@ -268,6 +332,12 @@ def handle_command(cmd, now):
         session = None
     elif kind == "ping":
         publish_status(now)
+    elif kind == "model2" and live_model and live_model.models:
+        if cmd.get("kind") in live_model.models.m["model2"]:
+            live_model.kind = cmd["kind"]
+            live_model.hist2.clear()
+            print("Model 2 is now", live_model.kind, flush=True)
+        publish_status(now)
 
 
 def publish_status(now):
@@ -280,6 +350,8 @@ def publish_status(now):
         "remaining": round(session.remaining(now), 1) if session else None,
         "imu": imu_state, "rate_hz": round(len(recent) / 2.0, 1),
         "drops": drops, "errors": errors, "sessions_on_board": saved,
+        "model2_kind": live_model.kind if live_model else None,
+        "model2_kinds": list(live_model.models.m["model2"]) if live_model and live_model.models else [],
     })
 
 
@@ -287,8 +359,13 @@ def update_matrix(now):
     if session is None:
         if now < saved_until:
             show(rows_frame(CHECK))
+        elif imu_state == "not found":
+            show(text_frame("E!"))
+        elif live_model and live_model.latest and now - live_model.latest["t"] < 2:
+            # Left letter = Model 1, right letter = Model 2.
+            show(text_frame(LABEL_LETTER[live_model.latest["m1"]] + LABEL_LETTER[live_model.latest["m2"]]))
         else:
-            show(text_frame("OK" if imu_state != "not found" else "E!"))
+            show(text_frame("OK"))
     elif session.state == "countdown":
         show(text_frame(str(int(session.remaining(now)) + 1)))
     else:
@@ -297,8 +374,10 @@ def update_matrix(now):
 
 
 def loop():
-    global session, imu_state, last_live, last_status, last_imu_check, saved_until, started
+    global session, imu_state, last_live, last_status, last_imu_check, saved_until, started, live_model
     now = time.time()
+    if live_model is None:
+        live_model = Live()
     try:
         if not started or now - last_imu_check > 5:
             imu_state = Bridge.call("imu_status")
@@ -314,6 +393,11 @@ def loop():
 
     recent.extend([now] * len(samples))
     live.extend(samples)
+    if live_model.add(samples):
+        try:
+            publish("live", live_model.classify(now))
+        except Exception as e:
+            print("live classify failed:", e, flush=True)
 
     while not commands.empty():
         handle_command(commands.get(), now)

@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity Wearable Live</title>
+<!--
+  Live demo display for the activity wearable. Open this file in a browser
+  (open ActivityWearable/dashboard.html); it connects to the same MQTT broker
+  as the board over WebSockets and shows Model 1 and Model 2 side by side.
+  Add ?demo to the URL to see it with made-up data (no board needed).
+-->
+<style>
+  :root {
+    --surface-0: #f3f2ee;
+    --surface-1: #fcfcfb;
+    --border: #e2e1dc;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #8a8985;
+    --still: #2a78d6;
+    --walk: #eb6834;
+    --run: #1baf7a;
+    --bike: #eda100;
+    --empty: #e6e5e0;
+    --alert-bg: #fff4e5;
+    --alert-ink: #7a4300;
+    --good: #008300;
+    --bad: #c6302f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --surface-0: #111110;
+      --surface-1: #1a1a19;
+      --border: #2e2e2c;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8e88;
+      --still: #3987e5;
+      --walk: #d95926;
+      --run: #199e70;
+      --bike: #c98500;
+      --empty: #2a2a28;
+      --alert-bg: #3a2a10;
+      --alert-ink: #ffd9a3;
+      --good: #3fb950;
+      --bad: #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e88;
+    --still: #3987e5; --walk: #d95926; --run: #199e70; --bike: #c98500;
+    --empty: #2a2a28; --alert-bg: #3a2a10; --alert-ink: #ffd9a3; --good: #3fb950; --bad: #e66767;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
+    padding: 20px 24px 28px;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1400px; margin: 0 auto; display: grid; gap: 16px; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  header .sub { color: var(--text-secondary); font-size: 14px; }
+  header .spacer { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface-1); font-size: 14px; color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); }
+  .dot.on { background: var(--good); }
+  .dot.off { background: var(--bad); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; background: var(--surface-1); }
+  .seg button {
+    border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 14px;
+    padding: 6px 14px; cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.active { background: var(--text-primary); color: var(--surface-1); }
+  .seg .label { padding: 6px 4px 6px 12px; font-size: 14px; color: var(--text-muted); }
+
+  .models { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px;
+    padding: 20px 22px 22px; position: relative; overflow: hidden; min-width: 0;
+    transition: opacity .3s;
+  }
+  .card::before {   /* accent bar in the current activity's colour */
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 6px; background: var(--accent, var(--empty));
+    transition: background .25s;
+  }
+  .eyebrow { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+  .card h2 { margin: 2px 0 0; font-size: 17px; color: var(--text-secondary); font-weight: 500; }
+  .answer { display: flex; align-items: center; gap: 18px; margin: 18px 0 14px; }
+  .badge {
+    width: 92px; height: 92px; border-radius: 22px; display: grid; place-items: center; font-size: 54px;
+    background: var(--accent, var(--empty)); transition: background .25s; flex: none;
+  }
+  .word { font-size: clamp(44px, 6.4vw, 84px); font-weight: 750; letter-spacing: -0.03em; line-height: 1; }
+  .why { color: var(--text-secondary); font-size: 15px; min-height: 2.8em; }
+  .why b { color: var(--text-primary); font-weight: 600; }
+
+  /* Model 1 gauge */
+  .gauge { margin-top: 18px; }
+  .zones { position: relative; height: 34px; border-radius: 8px; overflow: hidden; display: flex; gap: 2px; }
+  .zone { height: 100%; opacity: .85; display: flex; align-items: center; justify-content: center;
+          font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; }
+  .marker { position: absolute; top: -8px; bottom: -8px; width: 4px; border-radius: 2px; background: var(--text-primary);
+            box-shadow: 0 0 0 2px var(--surface-1); transition: left .2s ease-out; display: none; }
+  .zones.ready .marker { display: block; }
+  .zones { overflow: visible; }
+  .zone:first-child { border-radius: 8px 0 0 8px; }
+  .zone:nth-last-child(2) { border-radius: 0 8px 8px 0; }
+  .scale { position: relative; height: 38px; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .scale span { position: absolute; transform: translateX(-50%); top: 4px; white-space: nowrap; }
+  .scale span:first-child { transform: none; }
+  .scale span:last-child { transform: translateX(-100%); }
+  .peakval { font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 700; }
+  .peakval small { font-size: 15px; color: var(--text-secondary); font-weight: 500; }
+
+  /* Model 2 bars */
+  .bars { display: grid; gap: 8px; margin-top: 14px; }
+  .bar { display: grid; grid-template-columns: 64px 1fr 48px; align-items: center; gap: 10px; font-size: 14px; color: var(--text-secondary); }
+  .bar .track { height: 14px; background: var(--empty); border-radius: 7px; overflow: hidden; }
+  .bar .fill { height: 100%; width: 0; border-radius: 7px; transition: width .25s; }
+  .bar .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; }
+  .stat { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+  .stat .k { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+  .stat .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap; }
+  .stat .v small { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+
+  .verdict {
+    border-radius: 14px; padding: 14px 18px; font-size: 19px;
+    background: var(--surface-1); border: 1px solid var(--border); color: var(--text-secondary);
+  }
+  .verdict b { color: var(--text-primary); }
+  .verdict.disagree { background: var(--alert-bg); color: var(--alert-ink); border-color: transparent; }
+  .verdict.disagree b { color: inherit; }
+
+  .bottom { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; min-width: 0; }
+  .panel h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+  .timeline { display: grid; grid-template-columns: 70px 1fr; gap: 8px 10px; align-items: center; font-size: 13px; color: var(--text-muted); }
+  .cells { display: grid; grid-template-columns: repeat(120, 1fr); gap: 1px; height: 26px; }
+  .cells div { background: var(--empty); border-radius: 2px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; color: var(--text-secondary); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  canvas { width: 100%; height: 120px; display: block; }
+
+  .offline .card, .offline .verdict, .offline .bottom { opacity: .45; }
+  .waiting { display: none; }
+  .offline .waiting { display: block; }
+
+  @media (max-width: 900px) {
+    body { padding: 16px; }
+    .models, .bottom { grid-template-columns: 1fr; }
+    .badge { width: 72px; height: 72px; font-size: 42px; }
+    .stats { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body class="offline">
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Activity wearable</h1>
+      <div class="sub">MPU-6050 on the right shin · 100 samples a second · a new answer every 0.5 s</div>
+    </div>
+    <div class="spacer"></div>
+    <span class="pill" id="conn"><span class="dot" id="conn-dot"></span><span id="conn-text">connecting…</span></span>
+    <span class="seg" id="kinds"><span class="label">Model 2:</span></span>
+  </header>
+
+  <div class="verdict waiting" id="waiting">
+    Waiting for the wearable. Is it on the power bank, with the app started
+    (<code>python3 tools/deploy.py ActivityWearable/unoq/activity-wearable</code>)?
+  </div>
+
+  <section class="models">
+    <article class="card" id="card1">
+      <div class="eyebrow">Model 1 · one number</div>
+      <h2 id="m1-title">Peak acceleration up the shin, 3 thresholds</h2>
+      <div class="answer"><div class="badge" id="m1-badge">·</div><div class="word" id="m1-word">—</div></div>
+      <div class="peakval"><span id="m1-peak">–</span> <small>g peak in the last 2 s</small></div>
+      <div class="gauge">
+        <div class="zones" id="zones"><div class="marker" id="marker" style="left:0"></div></div>
+        <div class="scale" id="scale"></div>
+      </div>
+      <div class="why" id="m1-why"></div>
+    </article>
+
+    <article class="card" id="card2">
+      <div class="eyebrow">Model 2 · all six IMU outputs</div>
+      <h2 id="m2-title">31 features from acceleration and rotation</h2>
+      <div class="answer"><div class="badge" id="m2-badge">·</div><div class="word" id="m2-word">—</div></div>
+      <div class="bars" id="bars"></div>
+      <div class="stats">
+        <div class="stat"><div class="k">Posture</div><div class="v" id="posture">–</div></div>
+        <div class="stat"><div class="k">Shin swing</div><div class="v" id="swing">–</div></div>
+        <div class="stat"><div class="k" id="rate-k">Rhythm</div><div class="v" id="rate">–</div></div>
+      </div>
+    </article>
+  </section>
+
+  <div class="verdict" id="verdict">–</div>
+
+  <section class="bottom">
+    <div class="panel">
+      <h3>Last 60 seconds</h3>
+      <div class="timeline">
+        <span>Model 1</span><div class="cells" id="cells1"></div>
+        <span>Model 2</span><div class="cells" id="cells2"></div>
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="panel">
+      <h3 id="trace-title">Acceleration up the shin, last 5 s (Model 1's input)</h3>
+      <canvas id="trace"></canvas>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+const TOPIC = "ME193/Sam/wear";
+const BROKER = "wss://broker.hivemq.com:8884/mqtt";
+const CLASSES = ["still", "walk", "run", "bike"];
+const ICON = { still: "🧍", walk: "🚶", run: "🏃", bike: "🚴" };
+const KIND_NAME = { tree: "Tree", forest: "Forest", knn: "KNN" };
+const KIND_LONG = { tree: "one decision tree", forest: "a random forest of 100 trees", knn: "7 nearest neighbours" };
+const GAUGE_MAX = 8;            // g shown on Model 1's gauge (bigger peaks pin to the right)
+const DEMO = new URLSearchParams(location.search).has("demo");
+
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+let lastLive = 0, lastStatus = 0, status = {}, thresholds = null, direction = "+y";
+const hist1 = [], hist2 = [];
+const trace = [];               // last 5 s of acceleration along Model 1's axis
+
+// ---- static pieces ----
+for (const c of CLASSES) {
+  $("bars").insertAdjacentHTML("beforeend",
+    `<div class="bar"><span>${c}</span><div class="track"><div class="fill" id="fill-${c}" style="background:var(--${c})"></div></div><span class="pct" id="pct-${c}">–</span></div>`);
+  $("legend").insertAdjacentHTML("beforeend", `<span><i style="background:var(--${c})"></i>${c}</span>`);
+}
+for (const id of ["cells1", "cells2"]) $(id).innerHTML = "<div></div>".repeat(120);
+
+function buildGauge(cuts) {
+  thresholds = cuts;
+  const zones = $("zones");
+  zones.querySelectorAll(".zone").forEach(z => z.remove());
+  // Zone order along the axis follows Model 1's learned thresholds: still < bike < walk < run.
+  const order = ["still", "bike", "walk", "run"];
+  const edges = [0, ...cuts, GAUGE_MAX];
+  order.forEach((c, i) => {
+    const w = (Math.min(edges[i + 1], GAUGE_MAX) - edges[i]) / GAUGE_MAX * 100;
+    zones.insertAdjacentHTML("beforeend",
+      `<div class="zone" style="flex:0 0 calc(${w}% - 2px);background:var(--${c})" title="${c}: ${edges[i].toFixed(2)}–${i < 3 ? edges[i + 1].toFixed(2) + " g" : "more"}">${w > 9 ? c : ""}</div>`);
+  });
+  zones.appendChild($("marker"));
+  zones.classList.add("ready");
+  // A threshold label that would sit close to the previous one drops to a second line.
+  const ticks = [0, ...cuts, GAUGE_MAX];
+  $("scale").innerHTML = ticks.map((v, i) => {
+    const low = i > 0 && i < ticks.length - 1 && v - ticks[i - 1] < 0.9 && !(i > 1 && ticks[i - 1] - ticks[i - 2] < 0.9);
+    return `<span style="left:${v / GAUGE_MAX * 100}%;top:${low ? 20 : 4}px">${v === GAUGE_MAX ? GAUGE_MAX + "+ g" : v === 0 ? "0" : v.toFixed(2)}</span>`;
+  }).join("");
+}
+
+function setKinds(kinds, current) {
+  const seg = $("kinds");
+  const want = kinds.join(",");
+  if (seg.dataset.kinds !== want) {
+    seg.dataset.kinds = want;
+    seg.querySelectorAll("button").forEach(b => b.remove());
+    for (const k of kinds) {
+      const b = document.createElement("button");
+      b.textContent = KIND_NAME[k] || k;
+      b.dataset.kind = k;
+      b.onclick = () => send({ cmd: "model2", kind: k });
+      seg.appendChild(b);
+    }
+  }
+  seg.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.kind === current));
+}
+
+// ---- updates ----
+function showLive(m) {
+  lastLive = Date.now();
+  if (!thresholds || thresholds.join() !== m.m1_thresholds.join()) buildGauge(m.m1_thresholds);
+  direction = m.m1_direction;
+
+  // Model 1
+  $("card1").style.setProperty("--accent", `var(--${m.m1})`);
+  $("m1-badge").textContent = ICON[m.m1];
+  $("m1-word").textContent = m.m1;
+  $("m1-peak").textContent = m.m1_peak.toFixed(2);
+  $("marker").style.left = `calc(${Math.max(0, Math.min(m.m1_peak, GAUGE_MAX)) / GAUGE_MAX * 100}% - 2px)`;
+  const [a, b, c] = m.m1_thresholds;
+  const zone = m.m1_peak < a ? `below ${a.toFixed(2)} g` : m.m1_peak < b ? `between ${a.toFixed(2)} and ${b.toFixed(2)} g`
+             : m.m1_peak < c ? `between ${b.toFixed(2)} and ${c.toFixed(2)} g` : `above ${c.toFixed(2)} g`;
+  $("m1-why").innerHTML = `The hardest push up the shin was <b>${m.m1_peak.toFixed(2)} g</b>, ${zone}, so it says <b>${m.m1}</b>. That's all it can see.`;
+
+  // Model 2
+  $("card2").style.setProperty("--accent", `var(--${m.m2})`);
+  $("m2-badge").textContent = ICON[m.m2];
+  $("m2-word").textContent = m.m2;
+  $("m2-title").textContent = `31 features → ${KIND_LONG[m.m2_kind] || m.m2_kind}`;
+  for (const k of CLASSES) {
+    const p = m.m2_proba[k] || 0;
+    $("fill-" + k).style.width = (p * 100) + "%";
+    $("pct-" + k).textContent = Math.round(p * 100) + "%";
+  }
+  $("posture").innerHTML = m.acc_y_mean > 0.94 ? "upright" : "lying<small> / leg raised</small>";
+  $("swing").innerHTML = `${Math.round(m.gyro_x_std)}<small> °/s</small>`;
+  const moving = m.gyro_x_std > 45 && m.cadence_share > 0.15;
+  if (m.m2 === "bike") { $("rate-k").textContent = "Pedalling"; $("rate").innerHTML = moving ? `${Math.round(m.cadence_hz * 60)}<small> rpm</small>` : "–"; }
+  else { $("rate-k").textContent = "Steps"; $("rate").innerHTML = moving ? `${Math.round(m.cadence_hz * 120)}<small> /min</small>` : "–"; }
+
+  // Verdict
+  const v = $("verdict");
+  if (m.m1 === m.m2) {
+    v.className = "verdict";
+    v.innerHTML = `${ICON[m.m2]} Both models say <b>${m.m2}</b>.`;
+  } else {
+    v.className = "verdict disagree";
+    v.innerHTML = `⚠️ They disagree: Model 1 says <b>${m.m1}</b>, Model 2 says <b>${m.m2}</b>.` +
+      (m.m2 === "bike" && m.m1 === "still" ? " Pedalling on your back peaks about as hard as standing still, so one number can't tell them apart." : "");
+  }
+
+  // Timeline
+  hist1.push(m.m1); hist2.push(m.m2);
+  if (hist1.length > 120) { hist1.shift(); hist2.shift(); }
+  for (const [id, h] of [["cells1", hist1], ["cells2", hist2]]) {
+    const cells = $(id).children;
+    for (let i = 0; i < 120; i++) {
+      const c = h[h.length - 120 + i];
+      cells[i].style.background = c ? `var(--${c})` : "";
+      cells[i].title = c || "";
+    }
+  }
+}
+
+function showStatus(s) {
+  status = s; lastStatus = Date.now();
+  setKinds(s.model2_kinds || [], s.model2_kind);
+}
+
+function addSamples(rows) {
+  const axis = { x: 1, y: 2, z: 3 }[direction[1]], sign = direction[0] === "-" ? -1 : 1;
+  for (const r of rows) trace.push(sign * r[axis]);
+  while (trace.length > 500) trace.shift();
+}
+
+function tick() {
+  const now = Date.now();
+  const online = now - lastStatus < 3000 && now - lastLive < 3000;
+  document.body.classList.toggle("offline", !online);
+  $("conn-dot").className = "dot " + (online ? "on" : (client && client.connected ? "" : "off"));
+  $("conn-text").textContent = online ? `live · ${Math.round(status.rate_hz || 0)} Hz` + (status.state === "recording" ? " · recording" : "")
+    : (client && client.connected ? "broker ok · wearable offline" : "connecting to broker…");
+  drawTrace();
+  requestAnimationFrame(tick);
+}
+
+function drawTrace() {
+  const cv = $("trace"), dpr = devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const lo = -1, hi = 6, y = v => h - 16 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (h - 24);
+  g.font = "11px -apple-system, sans-serif";
+  g.lineWidth = 1;
+  let lastLabelY = Infinity;
+  for (const [v, label] of [[0, "0 g"], ...(thresholds || []).map(t => [t, t.toFixed(2)])]) {
+    g.strokeStyle = css("--border"); g.setLineDash(v === 0 ? [] : [4, 4]);
+    g.beginPath(); g.moveTo(34, y(v)); g.lineTo(w, y(v)); g.stroke();
+    if (lastLabelY - y(v) >= 12) {   // skip a label that would overlap the one below it
+      g.fillStyle = css("--text-muted"); g.fillText(label, 0, y(v) + 4);
+      lastLabelY = y(v);
+    }
+  }
+  g.setLineDash([]);
+  if (trace.length > 1) {
+    g.strokeStyle = css("--text-primary"); g.lineWidth = 2; g.lineJoin = "round";
+    g.beginPath();
+    trace.forEach((v, i) => { const x = 34 + i / 499 * (w - 34); i ? g.lineTo(x, y(v)) : g.moveTo(x, y(v)); });
+    g.stroke();
+  }
+}
+
+// ---- connection ----
+let client = null;
+function send(obj) { if (client && client.connected) client.publish(TOPIC + "/cmd", JSON.stringify(obj)); }
+
+if (!DEMO && window.mqtt) {
+  client = mqtt.connect(BROKER, { clientId: "wear-dash-" + Math.random().toString(16).slice(2, 8), reconnectPeriod: 2000 });
+  client.on("connect", () => client.subscribe([TOPIC + "/live", TOPIC + "/status", TOPIC + "/imu"]));
+  client.on("message", (topic, payload) => {
+    let m; try { m = JSON.parse(payload.toString()); } catch { return; }
+    if (topic.endsWith("/live")) showLive(m);
+    else if (topic.endsWith("/status")) showStatus(m);
+    else if (topic.endsWith("/imu")) addSamples(m.s || []);
+  });
+} else if (DEMO) {
+  // Made-up data that cycles through the activities, for checking the layout.
+  const cuts = [1.2024, 1.7133, 3.6936], plan = ["still", "walk", "run", "bike"];
+  let t = 0, seq = 0;
+  setInterval(() => {
+    t += 0.5;
+    const act = plan[Math.floor(t / 6) % 4];
+    const peak = { still: 1.02, walk: 2.6, run: 6.1, bike: 1.05 }[act] + Math.random() * 0.3;
+    const m1 = peak < cuts[0] ? "still" : peak < cuts[1] ? "bike" : peak < cuts[2] ? "walk" : "run";
+    const proba = Object.fromEntries(CLASSES.map(c => [c, c === act ? 0.9 : 0.1 / 3]));
+    showStatus({ rate_hz: 100, state: "idle", model2_kind: "forest", model2_kinds: ["tree", "forest", "knn"] });
+    showLive({ m1, m1_peak: peak, m1_thresholds: cuts, m1_direction: "+y", m2: act, m2_kind: "forest", m2_proba: proba,
+               acc_y_mean: act === "bike" ? 0.2 : 0.98, gyro_x_std: act === "still" ? 1 : 140,
+               cadence_hz: { still: 0, walk: 0.9, run: 1.4, bike: 1.1 }[act], cadence_share: act === "still" ? 0 : 0.4 });
+    const rows = [];
+    for (let i = 0; i < 50; i++, seq++) {
+      const s = seq / 100, base = act === "bike" ? 0.2 : 1;
+      const amp = { still: 0.02, walk: 1.2, run: 3.5, bike: 0.6 }[act];
+      rows.push([seq, 0, base + amp * Math.max(0, Math.sin(2 * Math.PI * 1.1 * s)) ** 3, 0, 0, 0, 0]);
+    }
+    addSamples(rows);
+  }, 500);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

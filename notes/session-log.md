@@ -584,3 +584,20 @@ real bugs plus a round of feature requests.
   - Model 2's tree uses gyro_x_std, then acc_y_mean (lying down), then acc_z_mean (forward lean when running).
   - k-means: still and bike come out as clean groups; walking and easy jogging land in one group, fast running in another.
 - **Not committed yet:** the person IDs include "MAYA", which looks like a first name rather than initials, so I'm asking Sam before pushing the data to GitHub.
+
+## Activity wearable: live mode + dashboard — 2026-10-26
+
+- Sam said keep the person IDs as they are and push everything; pushed `a59821a`, with the data, train.py and figures.
+- **Board `main.py`, `Live` class:**
+  - Keeps a 200-sample window; every 50 new samples it runs `classify.Models` (Model 1 + Model 2, default forest) and publishes `ME193/Sam/wear/live`.
+  - Each answer is the most common of the last 3. It also publishes the +Y peak, thresholds, forest probabilities, cadence, acc_y_mean and gyro_x_std.
+  - A gap in `seq` restarts the window.
+  - The LED matrix shows `<M1><M2>` letters.
+  - New command `{"cmd": "model2", "kind": "tree"|"forest"|"knn"}`.
+  - Tested by replaying sessions through `Live` with board-only parts stubbed out (0.6 ms per answer on the laptop), then on the board: an answer every ~0.5 s, and switching works.
+- **`ActivityWearable/dashboard.html`:** one page using mqtt.js 5.10.1 from jsDelivr and `wss://broker.hivemq.com:8884/mqtt`.
+  - Two model cards (a gauge for Model 1, vote bars + posture/swing/cadence for Model 2), an agree/disagree banner, a 60 s timeline and the +Y signal.
+  - Palette: the dataviz skill's reference slots 1–4. Node isn't installed, so the validator wasn't run; that palette is pre-validated, and every class is also named in text.
+  - Checked with headless Chrome over the DevTools protocol (a throwaway venv with websocket-client in the scratchpad): live data, `?demo`, light and dark, and 390 px wide with no horizontal scroll.
+  - Chrome's `--timeout` screenshots don't wait in real time, so they never showed live data.
+  - Launching Chrome from VS Code's terminal set off a macOS "prevented from modifying apps" prompt (Chrome trying to update itself). It's harmless.

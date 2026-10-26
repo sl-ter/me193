@@ -7,7 +7,7 @@ A wearable built from the UNO Q and an MPU-6050 IMU (GY-521 breakout) that tells
 
 Three classmates each try one activity live, so the models are trained on several people and tested on a person they haven't seen. The full plan lives in the Obsidian note `me193; ActivityWearable` (rubric, model choices, data plan, assembly steps).
 
-Status: **assembled, and recording works end to end** (tested 2026-10-26: 500/500 samples, no gaps). Next: record Sam's protocol, then 3–5 other people.
+Status: **3 people recorded, both models trained** (2026-10-26). Held out (each person tested by a model trained on the others): **Model 1 80%, Model 2 99%**. Next: live classification on the board.
 
 ## Hardware and wiring
 
@@ -147,6 +147,64 @@ The board times each session itself and saves it to `data/` in its app folder, s
 - **SSH and deploy over Wi-Fi:** the laptop on Tufts Secure can reach the board on Tufts_Wireless, so `deploy.py` and `pull_data.py` work over Wi-Fi with `UNOQ_HOST`.
 - **The board's clock isn't NTP-synced** (it reads 1 Oct), so each session's start time in the file comes from the laptop.
 
+## Training and results
+
+```bash
+source venv/bin/activate
+python ActivityWearable/train.py
+```
+
+What `train.py` does:
+- Cuts every kept session into **2 s windows, one every 0.5 s**, after dropping 3 s at each end (1 s for the 10 s calibration).
+- Scores every model **leave-one-person-out**: train on two people, test on the third, then rotate. That's the demo situation, a person the model has never seen.
+- Writes `figures/` and `unoq/activity-wearable/python/models.json`, which holds the final models trained on everyone.
+- Checks that the board's numpy-only runner (`classify.py`) gives the same answers as scikit-learn. It does: 100% match for every model.
+
+Results, 2026-10-26: 1569 windows from SL, TEOROM and MAYA.
+
+| Model | Input | Held-out accuracy | Per person |
+|---|---|---|---|
+| **Model 1** | peak of **+Y** (along the shin, toward the knee) in each window, 3 thresholds | **80%** | MAYA 78, SL 85, TEOROM 77 |
+| Model 2, decision tree (depth ≤ 4) | 31 features from all six IMU outputs | 95% | MAYA 100, SL 94, TEOROM 92 |
+| **Model 2, random forest** (100 trees) | same | **99%** | MAYA 98, SL 100, TEOROM 100 |
+| Model 2, KNN (k = 7, standardised) | same | 97.5% | MAYA 99, SL 98, TEOROM 95 |
+
+**Model 1's thresholds on +Y:**
+
+| +Y peak | Predicted |
+|---|---|
+| below 1.20 g | still |
+| 1.20–1.71 g | bike |
+| 1.71–3.69 g | walk |
+| above 3.69 g | run |
+
+**Choosing Model 1's setup:**
+- **Direction:** all six directions were tried; +Y wins (Z, the original guess, gets 61%).
+- **Tree shape:** a tree that grows its 4 regions best-first (`max_leaf_nodes=4`) beats a depth-2 tree (80% vs 74%), because the depth-2 tree spent two thresholds between walk and run and none on bike.
+
+**Why Model 2 wins: bike.** Air-biking's +Y peaks (0.5–2.8 g) overlap standing still (about 1 g) and walking. So Model 1 gets bike right only 33% of the time: 44% of bike windows are called still and 24% walk. Its other mistakes are 10% of runs called walks (tall people's fast walks hit 7–9 g).
+
+**Model 2's decision tree is readable** (`figures/model2_tree.png`). It asks 4 questions:
+
+| Question | If yes |
+|---|---|
+| Is the shin barely swinging (`gyro_x_std` ≤ 45 °/s)? | still |
+| Is the shin not vertical (`acc_y_mean` ≤ 0.94 g, i.e. lying down)? | bike |
+| Is the shin leaning forward on average (`acc_z_mean` ≤ −0.44 g)? | run |
+| Otherwise | walk |
+
+**K-means** (`figures/kmeans.png`), with no labels at all, finds still and bike as clean groups. It splits running by speed instead of separating walk from run: walking and easy jogging end up in one group, fast running in another.
+
+| Figure | Shows |
+|---|---|
+| `model1_peaks.png` | every window's +Y peak by activity, with the 3 thresholds |
+| `model1_directions.png` | Model 1's held-out accuracy for each of the 6 directions |
+| `confusion.png` | Model 1 vs Model 2 (forest), held out |
+| `model2_tree.png` | the 4-question decision tree |
+| `model2_importance.png` | the forest's most-used features |
+| `kmeans.png` | true activities vs k-means groups, on 2 principal components |
+| `results.json` | every number above |
+
 ## Files
 
 | Path | What it is |
@@ -154,6 +212,8 @@ The board times each session itself and saves it to `data/` in its app folder, s
 | `common.py` | broker/topic settings, data paths, the recording protocol |
 | `record.py` | guided recording session (laptop) |
 | `pull_data.py` | copies sessions off the board into `data/` |
-| `unoq/activity-wearable/` | the wearable's App Lab app (sketch + Python) |
+| `train.py` | windows, leave-one-person-out evaluation, figures, `models.json` |
+| `figures/` | the figures + `results.json` |
+| `unoq/activity-wearable/` | the wearable's App Lab app (sketch + Python). `python/features.py` (windows + features) and `python/classify.py` (runs `models.json` with numpy only) are shared with `train.py`, so the laptop and the board compute features identically |
 | `unoq/imu-check/` | bench-check App Lab app (sketch + Python) |
 | `data/` | recorded sessions + `session_log.csv` (`data/live/` is gitignored) |

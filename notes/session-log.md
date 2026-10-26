@@ -566,3 +566,21 @@ real bugs plus a round of feature requests.
   - **Pinned the board's MAC:** `nmcli con modify Tufts_Wireless 802-11-wireless.cloned-mac-address 14:B5:CD:F7:FD:9B`, at Sam's request, so it can't use up another registration.
   - **Removed the voice prompts** from `record.py`; cues are on screen only.
   - **UI test:** drove the real UI through a pseudo-terminal (fit → orientation → a 10 s calibration). It saved 1000/1000 samples with 0 gaps, and the orientation check correctly flagged the board lying flat. Test files deleted.
+
+## Activity wearable: 3 people recorded, both models trained — 2026-10-26
+
+- **Data:** SL, TEOROM and MAYA each did the full protocol; every kept session has all its samples and no gaps.
+  - The fast runs failed record.py's rough check only because it compared the combined |a| (up to 19.7 g) with the ±16 g per-axis limit. No single axis went past 14.3 g, so nothing clipped. That check has been removed.
+  - Earlier fix: the walking check no longer caps the peak. Tall walkers hit 7–9 g.
+- **New files:**
+  - `unoq/activity-wearable/python/features.py`: 2 s windows every 0.5 s, plus 31 features for Model 2 and `peak()` for Model 1. It's numpy only and imported by both train.py and the board.
+  - `classify.py`: runs the exported trees, forest and KNN.
+  - `ActivityWearable/train.py`: leave-one-person-out evaluation, figures, and `models.json` (0.6 MB). Its runner matches scikit-learn 100%.
+- scikit-learn 1.9.1 (+ joblib, threadpoolctl) added to the root venv and `requirements.txt`.
+- **Results (held out):**
+  - **Model 1: +Y peak, 80%.** Thresholds 1.20 / 1.71 / 3.69 g separate still / bike / walk / run. A `max_leaf_nodes=4` tree beats depth 2 (74%), and +Y beats every other direction; Z, the original guess, got 61%.
+  - **Model 2: forest 99.3%, KNN 97.5%, tree 95.3%.**
+  - Model 1's weakness is **bike**: only 33% right, with 44% called still, because the +Y peak during air-biking overlaps standing at about 1 g.
+  - Model 2's tree uses gyro_x_std, then acc_y_mean (lying down), then acc_z_mean (forward lean when running).
+  - k-means: still and bike come out as clean groups; walking and easy jogging land in one group, fast running in another.
+- **Not committed yet:** the person IDs include "MAYA", which looks like a first name rather than initials, so I'm asking Sam before pushing the data to GitHub.

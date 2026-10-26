@@ -222,10 +222,11 @@ def quality(step, st):
         else:
             out.append((False, f"A lot of motion for 'still' (std {std:.2f} g). Redo if you took steps."))
     elif step.label == "walk":
+        # No upper limit on the peak: heel strikes at the shin reach 7-9 g for a
+        # tall walker (Sam, 2026-10-26), overlapping running. That overlap is a
+        # finding for Model 1, not a bad recording.
         if std < 0.12:
             out.append((False, f"Very little motion (std {std:.2f} g). Were you walking?"))
-        elif peak > 6:
-            out.append((False, f"Peaks up to {peak:.1f} g look like running. Redo if you ran."))
         else:
             out.append((True, f"Looks like walking (std {std:.2f} g, peak {peak:.1f} g)."))
     elif step.label == "run":
@@ -418,8 +419,9 @@ class Recorder:
             render([f"{BOLD}Done with {self.args.person}.{RESET}", "",
                     f"  Kept this run: {', '.join(self.recorded) or 'nothing'}",
                     f"  Not recorded:  {', '.join(todo) or 'nothing'}", "",
-                    "  Next: plug the board into the laptop with USB and run",
-                    f"    {BOLD}python ActivityWearable/pull_data.py{RESET}", "",
+                    "  Next: copy the sessions to the laptop over Wi-Fi (no need to unplug; the",
+                    "  board keeps them on its storage even if it loses power):",
+                    f"    {BOLD}UNOQ_HOST=<board ip> python ActivityWearable/pull_data.py{RESET}", "",
                     f"{DIM}q quit{RESET}"])
             if self.keys.get(0.3) in ("q", "enter"):
                 return

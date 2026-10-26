@@ -544,3 +544,25 @@ real bugs plus a round of feature requests.
   - **The Bridge round trip is about 9.5 ms per call (~106/s)**, so the logger should sample on the STM32 and send batches, not one call per sample.
 - The board rebooted once mid-session: Sam was clipping the GY-521's header leads, and a lead probably shorted something. It was fine after.
 - The board's Wi-Fi IP is now 172.16.9.166 (added to `HOSTS` in `tools/board_secrets.py`). Deploying `imu-check` stops BoardStatus until the next reboot.
+
+## Activity wearable: recording app + guided recorder — 2026-10-26
+
+- Sam assembled the wearable: the GY-521 is hot-glued to the UNO Q's 3D-printed case, in a sock-sleeve pocket, on the **right** leg every time. Decided: lying still on your back counts as "still"; walking and running get recorded in a hallway; the app gets started over Wi-Fi each time (no autostart).
+- New board app `ActivityWearable/unoq/activity-wearable/`:
+  - **Sketch:** samples at 100 Hz on its own clock (`micros()` schedule; when it falls far behind it skips ticks rather than bursting) into a 128-sample ring. `imu_batch()` returns at most 7 samples as hex: **the Bridge's RPC buffer is 256 bytes** (`DECODER_BUFFER_SIZE / 4` in RPClite 0.3.1). It also draws frames on the LED matrix.
+  - **Python:** saves each session to `/app/data` (the app folder), times the countdown and the recording itself, and talks MQTT (`ME193/Sam/wear/{cmd,status,event,imu}`).
+- Laptop side:
+  - `common.py`: the 11-step protocol, about 5.5 min of recording per person.
+  - `record.py`: a guided terminal UI (no sound; Sam asked for no voice) with on-screen cues, an orientation check, a big countdown, rough quality checks, and redo. It keeps `data/live/` copies and `data/session_log.csv`.
+  - `pull_data.py`: copies sessions off the board using `tools/deploy.py`'s transport.
+- Network findings:
+  - **The board's MAC is now `14:b5:cd:f7:fd:9b`.** The `B6:28:D9:3E:A7:E6` in Sam's notes is a locally-administered (randomized) address. Tufts_Wireless redirected everything to device registration until Sam registered the new MAC. After that the board got 10.243.82.39 (added to `HOSTS`), and SSH works from the laptop on Tufts Secure.
+  - **`test.mosquitto.org:1883` is unreachable from both Tufts networks**, so the project uses `broker.hivemq.com`.
+  - The board's clock is unsynced (it reads 2026-10-01), so the laptop sends `laptop_time` for each file's header.
+- `tools/deploy.py`: `UNOQ_HOST=<ip>` is tried before `HOSTS`, because the board's Wi-Fi IP changes.
+- **BoardStatus IP display was stale** (it showed 10.5.13.215). The cron job had been failing with "Permission denied", because `update_ip.sh` had lost its execute bit; the repo had it as 100644, and deploys copy that. Fixed with `chmod +x` on the board, and the three BoardStatus scripts are now 100755 in git. A crontab change to `/bin/sh update_ip.sh` was blocked as persistence, and is no longer needed if the mode bit sticks.
+- End-to-end test over USB + MQTT: a 5 s session saved 500/500 rows with 0 gaps and 0 drops, the live copy arrived, and `pull_data.py` copied it. The 381 startup drops are from before Python starts draining; they're counted per session, so they don't matter. The test file was deleted afterwards.
+- Follow-ups the same evening:
+  - **Pinned the board's MAC:** `nmcli con modify Tufts_Wireless 802-11-wireless.cloned-mac-address 14:B5:CD:F7:FD:9B`, at Sam's request, so it can't use up another registration.
+  - **Removed the voice prompts** from `record.py`; cues are on screen only.
+  - **UI test:** drove the real UI through a pseudo-terminal (fit → orientation → a 10 s calibration). It saved 1000/1000 samples with 0 gaps, and the orientation check correctly flagged the board lying flat. Test files deleted.

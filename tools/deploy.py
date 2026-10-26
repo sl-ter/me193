@@ -14,6 +14,7 @@ Works on macOS, Linux and Windows 10+ (uses the built-in ssh and scp).
 If the board is plugged in over USB and `adb` is installed, that is used first;
 otherwise it falls back to ssh over the network addresses in HOSTS.
 """
+import os
 import shutil
 import subprocess
 import sys
@@ -86,11 +87,14 @@ def find_adb_board():
 
 
 def find_board():
-    """Return ('adb', None) or ('ssh', 'user@host') for the first transport that answers."""
+    """Return ('adb', None) or ('ssh', 'user@host') for the first transport that answers.
+    UNOQ_HOST=<ip> in the environment is tried before HOSTS (the board's Wi-Fi IP
+    changes whenever it rejoins; BoardStatus scrolls the current one)."""
     board = find_adb_board()
     if board:
         return board
-    for host in HOSTS:
+    extra = [os.environ["UNOQ_HOST"]] if os.environ.get("UNOQ_HOST") else []
+    for host in extra + [h for h in HOSTS if h not in extra]:
         print(f"Trying {host} ...", end=" ", flush=True)
         r = run(["ssh", *SSH_OPTS, f"{USER}@{host}", "true"],
                 check=False, timeout=10, quiet=True)

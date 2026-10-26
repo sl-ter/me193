@@ -1,0 +1,344 @@
+"""UNO Q - Linux side of the activity wearable (recording mode).
+
+Drains the sketch's 100 Hz IMU samples, saves recording sessions as CSV in
+data/ (this app's folder on the board, mounted at /app), streams samples and
+status over MQTT for the laptop (ActivityWearable/record.py), and shows the
+state on the LED matrix.
+
+The laptop starts a session with a command on ME193/Sam/wear/cmd. The board
+then runs the countdown and the timed recording itself, so a session still
+ends cleanly if Wi-Fi drops halfway down the hall.
+
+Topics (must match ActivityWearable/common.py):
+  .../cmd     laptop -> board  {"cmd": "record", ...} / {"cmd": "stop"} / {"cmd": "ping"}
+  .../status  board -> laptop  twice a second
+  .../event   board -> laptop  recording / saved / aborted / error
+  .../imu     board -> laptop  live samples, 10 messages a second
+"""
+import json
+import os
+import queue
+import re
+import time
+from collections import deque
+from datetime import datetime
+
+import numpy as np
+import paho.mqtt.client as mqtt
+from arduino.app_utils import App, Bridge, Frame
+
+BROKER = "broker.hivemq.com"   # test.mosquitto.org:1883 is unreachable from Tufts networks (2026-10-26)
+PORT = 1883
+TOPIC = "ME193/Sam/wear"
+DATA_DIR = "/app/data"
+
+RATE_HZ = 100
+ACC_LSB_PER_G = 2048.0      # +-16 g
+GYRO_LSB_PER_DPS = 16.4     # +-2000 deg/s
+MAX_BATCH = 7               # must match the sketch
+LIVE_EVERY = 0.1            # seconds between live-sample messages
+STATUS_EVERY = 0.5
+SAVED_SHOW_S = 3.0          # how long the matrix shows the check mark
+
+AXES_NOTE = "+Y up the shin (toward the knee), +Z forward out of the shin, +X to the wearer's left"
+COLUMNS = "t_s,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps"
+
+# ---- MQTT -------------------------------------------------------------------
+commands = queue.Queue()
+
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    client.subscribe(TOPIC + "/cmd")
+    print(f"MQTT connected ({reason_code}), listening on {TOPIC}/cmd", flush=True)
+
+
+def on_message(client, userdata, msg):
+    try:
+        commands.put(json.loads(msg.payload))
+    except ValueError:
+        print("ignored a command that isn't JSON:", msg.payload[:80], flush=True)
+
+
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"wear-board-{int(time.time())}")
+client.on_connect = on_connect
+client.on_message = on_message
+client.connect_async(BROKER, PORT, keepalive=30)   # retries in the background until Wi-Fi is up
+client.loop_start()
+
+
+def publish(sub, payload):
+    client.publish(f"{TOPIC}/{sub}", json.dumps(payload))
+
+
+# ---- LED matrix -------------------------------------------------------------
+GLYPHS = {   # 5 wide x 7 tall
+    "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
+    "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+    "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+    "3": ["11111", "00010", "00100", "00010", "00001", "10001", "01110"],
+    "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+    "5": ["11111", "10000", "11110", "00001", "00001", "10001", "01110"],
+    "6": ["00110", "01000", "10000", "11110", "10001", "10001", "01110"],
+    "7": ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+    "8": ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
+    "9": ["01110", "10001", "10001", "01111", "00001", "00010", "01100"],
+    "S": ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
+    "W": ["10001", "10001", "10001", "10101", "10101", "10101", "01010"],
+    "R": ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
+    "B": ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+    "O": ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
+    "K": ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
+    "E": ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+    "!": ["00100", "00100", "00100", "00100", "00100", "00000", "00100"],
+    "?": ["01110", "10001", "00001", "00010", "00100", "00000", "00100"],
+}
+CHECK = ["0000000000000", "0000000000011", "0000000000110", "0000000001100",
+         "1100000011000", "0110000110000", "0011001100000", "0001111000000"]
+LABEL_LETTER = {"still": "S", "walk": "W", "run": "R", "bike": "B"}
+BRIGHT = 7
+
+
+def text_frame(text, progress=None):
+    """Characters centred in rows 0-6; optional progress bar (0-1) on row 7."""
+    arr = np.zeros((8, 13), dtype=np.uint8)
+    width = len(text) * 6 - 1
+    x0 = (13 - width) // 2
+    for i, ch in enumerate(text):
+        for y, row in enumerate(GLYPHS.get(ch, GLYPHS["?"])):
+            for dx, bit in enumerate(row):
+                if bit == "1":
+                    arr[y, x0 + i * 6 + dx] = BRIGHT
+    if progress is not None:
+        arr[7, :int(round(13 * min(max(progress, 0.0), 1.0)))] = 3
+    return arr
+
+
+def rows_frame(rows):
+    return np.array([[BRIGHT if c == "1" else 0 for c in row] for row in rows], dtype=np.uint8)
+
+
+last_frame = None
+
+
+def show(arr):
+    global last_frame
+    data = Frame(arr).to_board_bytes()
+    if data == last_frame:
+        return
+    try:
+        Bridge.call("draw", data)
+        last_frame = data
+    except Exception as e:
+        print("matrix draw failed:", e, flush=True)
+
+
+# ---- Sessions ---------------------------------------------------------------
+def safe_name(text):
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(text))[:80]
+
+
+class Session:
+    def __init__(self, cmd):
+        self.name = safe_name(cmd.get("session") or f"session_{datetime.now():%Y%m%d-%H%M%S}")
+        self.person = safe_name(cmd.get("person", "unknown"))
+        self.leg = safe_name(cmd.get("leg", "right"))
+        self.activity = safe_name(cmd.get("activity", "unknown"))
+        self.label = safe_name(cmd.get("label", "unknown"))
+        self.seconds = float(cmd.get("seconds", 30))
+        self.countdown = float(cmd.get("countdown", 5))
+        # The board's clock isn't NTP-synced, so the start time comes from the laptop.
+        self.started_at = re.sub(r"[^0-9T:.+-]", "", str(cmd.get("laptop_time", "")))[:32]
+        self.t_cmd = time.time()
+        self.state = "countdown"
+        self.file = None
+        self.path = None
+        self.first_seq = None
+        self.last_seq = None
+        self.t_record = None
+        self.rows = 0
+        self.gaps = 0
+        self.drops_at_start = 0
+        self.mags = []
+        self.gyro_sq = 0.0
+
+    def remaining(self, now):
+        if self.state == "countdown":
+            return max(0.0, self.countdown - (now - self.t_cmd))
+        if self.first_seq is None or self.last_seq is None:
+            return self.seconds
+        return max(0.0, self.seconds - (self.last_seq - self.first_seq + 1) / RATE_HZ)
+
+    def start_recording(self, drops):
+        os.makedirs(DATA_DIR, exist_ok=True)
+        self.path = os.path.join(DATA_DIR, self.name + ".csv")
+        self.file = open(self.path, "w")
+        self.file.write(f"# person={self.person} leg={self.leg} activity={self.activity} label={self.label} "
+                        f"rate_hz={RATE_HZ} accel_range_g=16 gyro_range_dps=2000 seconds={self.seconds:g} "
+                        f"start={self.started_at or 'unknown'}\n")
+        self.file.write(f"# axes: {AXES_NOTE}\n")
+        self.file.write(COLUMNS + "\n")
+        self.state = "recording"
+        self.t_record = time.time()
+        self.drops_at_start = drops
+        publish("event", {"type": "recording", "session": self.name, "seconds": self.seconds})
+        print(f"recording {self.name} ({self.seconds:g} s)", flush=True)
+
+    def add(self, seq, v):
+        """Add one sample; returns True once the session has its full length."""
+        if self.first_seq is None:
+            self.first_seq = seq
+        elif seq != self.last_seq + 1:
+            self.gaps += seq - self.last_seq - 1
+        self.last_seq = seq
+        t = (seq - self.first_seq) / RATE_HZ
+        if t >= self.seconds:
+            return True
+        self.file.write(f"{t:.2f},{v[0]:.4f},{v[1]:.4f},{v[2]:.4f},{v[3]:.2f},{v[4]:.2f},{v[5]:.2f}\n")
+        self.rows += 1
+        self.mags.append((v[0] ** 2 + v[1] ** 2 + v[2] ** 2) ** 0.5)
+        self.gyro_sq += v[3] ** 2 + v[4] ** 2 + v[5] ** 2
+        return False
+
+    def stats(self, drops):
+        m = np.array(self.mags) if self.mags else np.zeros(1)
+        return {"session": self.name, "file": os.path.basename(self.path or ""), "rows": self.rows,
+                "expected": int(self.seconds * RATE_HZ), "gaps": self.gaps,
+                "drops": drops - self.drops_at_start,
+                "acc_mean_g": round(float(m.mean()), 3), "acc_std_g": round(float(m.std()), 3),
+                "acc_peak_g": round(float(m.max()), 3),
+                "gyro_rms_dps": round((self.gyro_sq / max(self.rows, 1)) ** 0.5, 1)}
+
+    def finish(self, drops, aborted=False):
+        stats = self.stats(drops)
+        if self.file:
+            self.file.write(f"# end rows={self.rows} gaps={self.gaps} drops={stats['drops']}"
+                            f"{' ABORTED' if aborted else ''}\n")
+            self.file.close()
+            self.file = None
+        if aborted and self.path:
+            os.replace(self.path, self.path[:-4] + "_aborted.csv")
+            stats["file"] = os.path.basename(self.path[:-4] + "_aborted.csv")
+        publish("event", {"type": "aborted" if aborted else "saved", **stats})
+        print(("aborted " if aborted else "saved ") + json.dumps(stats), flush=True)
+
+
+# ---- Main loop --------------------------------------------------------------
+session = None
+imu_state = "?"
+drops = errors = 0
+live = []                      # samples waiting to go out on .../imu
+recent = deque()               # arrival times of recent samples, for the measured rate
+last_live = last_status = last_imu_check = 0.0
+saved_until = 0.0
+started = False
+
+
+def drain():
+    """Pull every waiting sample from the sketch: [(seq, (ax, ay, az, gx, gy, gz)), ...]."""
+    global drops, errors
+    out = []
+    for _ in range(40):        # 40 x 7 samples is far more than ever piles up
+        first, drops, errors, hexdata = Bridge.call("imu_batch").split(",")
+        drops, errors, first = int(drops), int(errors), int(first)
+        n = len(hexdata) // 24
+        if n:
+            raw = np.frombuffer(bytes.fromhex(hexdata), dtype=">i2").reshape(n, 6).astype(float)
+            raw[:, :3] /= ACC_LSB_PER_G
+            raw[:, 3:] /= GYRO_LSB_PER_DPS
+            out.extend((first + i, tuple(raw[i])) for i in range(n))
+        if n < MAX_BATCH:
+            break
+    return out
+
+
+def handle_command(cmd, now):
+    global session
+    kind = cmd.get("cmd")
+    if kind == "record":
+        if session is not None:
+            publish("event", {"type": "error", "message": f"busy with {session.name}"})
+            return
+        session = Session(cmd)
+        print(f"countdown for {session.name}", flush=True)
+    elif kind == "stop" and session is not None:
+        if session.state == "recording":
+            session.finish(drops, aborted=True)
+        else:
+            publish("event", {"type": "aborted", "session": session.name, "rows": 0})
+        session = None
+    elif kind == "ping":
+        publish_status(now)
+
+
+def publish_status(now):
+    while recent and now - recent[0] > 2.0:
+        recent.popleft()
+    saved = len([f for f in os.listdir(DATA_DIR) if f.endswith(".csv")]) if os.path.isdir(DATA_DIR) else 0
+    publish("status", {
+        "t": now, "state": session.state if session else "idle",
+        "session": session.name if session else None,
+        "remaining": round(session.remaining(now), 1) if session else None,
+        "imu": imu_state, "rate_hz": round(len(recent) / 2.0, 1),
+        "drops": drops, "errors": errors, "sessions_on_board": saved,
+    })
+
+
+def update_matrix(now):
+    if session is None:
+        if now < saved_until:
+            show(rows_frame(CHECK))
+        else:
+            show(text_frame("OK" if imu_state != "not found" else "E!"))
+    elif session.state == "countdown":
+        show(text_frame(str(int(session.remaining(now)) + 1)))
+    else:
+        done = 1 - session.remaining(now) / session.seconds
+        show(text_frame(LABEL_LETTER.get(session.label, "?"), progress=done))
+
+
+def loop():
+    global session, imu_state, last_live, last_status, last_imu_check, saved_until, started
+    now = time.time()
+    try:
+        if not started or now - last_imu_check > 5:
+            imu_state = Bridge.call("imu_status")
+            last_imu_check = now
+            if not started:
+                print("IMU:", imu_state, flush=True)
+                started = True
+        samples = drain()
+    except Exception as e:
+        print("Bridge error:", e, flush=True)
+        time.sleep(0.5)
+        return
+
+    recent.extend([now] * len(samples))
+    live.extend(samples)
+
+    while not commands.empty():
+        handle_command(commands.get(), now)
+
+    if session is not None:
+        if session.state == "countdown" and now - session.t_cmd >= session.countdown:
+            session.start_recording(drops)
+        elif session.state == "recording":
+            full = any(session.add(seq, v) for seq, v in samples)
+            stalled = now - session.t_record > session.seconds + 5   # no samples arriving (IMU lost?)
+            if full or stalled:
+                session.finish(drops)
+                session = None
+                saved_until = now + SAVED_SHOW_S
+
+    if now - last_live >= LIVE_EVERY and live:
+        publish("imu", {"s": [[seq] + [round(x, 3) for x in v] for seq, v in live]})
+        live.clear()
+        last_live = now
+    if now - last_status >= STATUS_EVERY:
+        publish_status(now)
+        last_status = now
+
+    update_matrix(now)
+    time.sleep(0.02)
+
+
+App.run(user_loop=loop)

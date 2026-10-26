@@ -7,7 +7,7 @@ A wearable built from the UNO Q and an MPU-6050 IMU (GY-521 breakout) that tells
 
 Three classmates each try one activity live, so the models are trained on several people and tested on a person they haven't seen. The full plan lives in the Obsidian note `me193; ActivityWearable` (rubric, model choices, data plan, assembly steps).
 
-Status: **the IMU is wired up and bench-checked** (below). Next: mount it in the case and the sleeve, then the data logger.
+Status: **assembled, and recording works end to end** (tested 2026-10-26: 500/500 samples, no gaps). Next: record Sam's protocol, then 3–5 other people.
 
 ## Hardware and wiring
 
@@ -82,8 +82,78 @@ acc g  x -0.04  y -0.73  z +0.66  |a| 0.99   gyro deg/s  x -1.6  y +2.4  z +1.7 
 - **The gyro reads 1–3 °/s while still.** That's normal MPU-6050 bias; subtract a still-period average before using it.
 - **Bridge timing:** about 9.5 ms per call, so one call per sample can only just reach 100 Hz. The logger will sample on the STM32 and hand Python batches instead.
 
+## Recording sessions
+
+### Each time (board on the power bank, over Wi-Fi)
+
+1. Plug the board into the power bank. BoardStatus starts on boot and scrolls the board's IP on the LED matrix. For the first minute after boot it may show the previous IP, until the once-a-minute update runs.
+2. On the laptop, start the wearable app (about a minute, with logs at the end):
+   ```bash
+   cd ~/Code/Projects/me193
+   UNOQ_HOST=<ip from the matrix> python3 tools/deploy.py ActivityWearable/unoq/activity-wearable
+   ```
+   When it's up, the matrix shows `OK` (or `E!` if the IMU isn't found).
+3. Run the guided recorder (needs the root venv for paho-mqtt):
+   ```bash
+   source venv/bin/activate
+   python ActivityWearable/record.py --person SL        # initials only
+   ```
+4. Afterwards, copy the sessions off the board, over Wi-Fi or by plugging into USB:
+   ```bash
+   UNOQ_HOST=<ip> python ActivityWearable/pull_data.py
+   ```
+
+### What `record.py` does
+
+It runs the 11-step protocol in `common.py`: fit check, orientation check, a 10 s calibration stand, then two sessions each of standing (including lying still), walking, running and air-biking. That's about 5.5 min of recording per person.
+
+For each step it:
+1. shows what to do and how
+2. runs a 5 s countdown, with a big number on screen
+3. shows the time left (yellow for the last 10 s), live motion, and on-screen cues (e.g. "SWITCH: walk fast now" halfway through the slow-then-fast walk). There is no sound, so whoever holds the laptop calls the cues out.
+4. sanity-checks the result: no missing samples, and roughly the right amount of motion for the activity. These are rough checks, not the model.
+
+You can keep or redo each session.
+
+Keys: Enter start/next, `r` redo, `s` skip, `b` back, `x` abort, `q` quit. `--start N` resumes at step N.
+
+The board times each session itself and saves it to `data/` in its app folder, so a session finishes cleanly even if Wi-Fi drops. The laptop keeps:
+- a copy of what arrived over MQTT, in `data/live/` (gitignored)
+- a log of every session, in `data/session_log.csv`, with redone ones marked `discarded`
+
+### `unoq/activity-wearable/`: the board app
+
+- **Sketch:** samples the MPU-6050 at 100 Hz on its own clock into a 128-sample ring buffer.
+  - Python drains it with `imu_batch()`, at most 7 samples per call. The Bridge's RPC buffer is 256 bytes (RPClite's `DECODER_BUFFER_SIZE / 4`), and a round trip is about 10 ms.
+  - Each sample carries `seq`, a 10 ms tick count, so a gap in `seq` is a missed sample.
+  - The sketch also draws the frames Python sends to the matrix: a countdown digit, the activity letter with a progress bar, and a check mark when saved.
+- **Python:**
+  - **Network:** MQTT on `broker.hivemq.com`, under the `ME193/Sam/wear/` topic prefix:
+
+    | Topic | Direction | Carries |
+    |---|---|---|
+    | `cmd` | laptop → board | commands |
+    | `status` | board → laptop | state, twice a second |
+    | `event` | board → laptop | `recording`, `saved`, `aborted`, `error` |
+    | `imu` | board → laptop | live samples, 10 messages a second |
+
+  - **Files:** writes `data/<person>_<activity>_<time>.csv` in the app folder, which the container mounts as `/app`.
+  - **CSV format:** two `#` header lines (person, leg, activity, label, rates, axes), the columns `t_s,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps`, and an `# end` line with the row, gap and drop counts.
+
+### Network notes (2026-10-26)
+
+- **Registration:** Tufts_Wireless only gives the board internet once its MAC is registered (`14:b5:cd:f7:fd:9b`; the `B6:28:…` address in older notes was a randomized one). Until then every connection is redirected to `device-registration-prod-04.it.tufts.edu`.
+- **The broker:** `test.mosquitto.org:1883` (the class default) times out from both Tufts_Wireless and Tufts Secure, so this project uses `broker.hivemq.com`.
+- **SSH and deploy over Wi-Fi:** the laptop on Tufts Secure can reach the board on Tufts_Wireless, so `deploy.py` and `pull_data.py` work over Wi-Fi with `UNOQ_HOST`.
+- **The board's clock isn't NTP-synced** (it reads 1 Oct), so each session's start time in the file comes from the laptop.
+
 ## Files
 
 | Path | What it is |
 |---|---|
+| `common.py` | broker/topic settings, data paths, the recording protocol |
+| `record.py` | guided recording session (laptop) |
+| `pull_data.py` | copies sessions off the board into `data/` |
+| `unoq/activity-wearable/` | the wearable's App Lab app (sketch + Python) |
 | `unoq/imu-check/` | bench-check App Lab app (sketch + Python) |
+| `data/` | recorded sessions + `session_log.csv` (`data/live/` is gitignored) |

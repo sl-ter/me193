@@ -76,15 +76,6 @@
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); }
   .dot.on { background: var(--good); }
   .dot.off { background: var(--bad); }
-  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; background: var(--surface-1); }
-  .seg button {
-    border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 14px;
-    padding: 6px 14px; cursor: pointer;
-  }
-  .seg button + button { border-left: 1px solid var(--border); }
-  .seg button.active { background: var(--text-primary); color: var(--surface-1); }
-  .seg .label { padding: 6px 4px 6px 12px; font-size: 14px; color: var(--text-muted); }
-
   .models { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .card {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px;
@@ -175,7 +166,6 @@
     </div>
     <div class="spacer"></div>
     <span class="pill" id="conn"><span class="dot" id="conn-dot"></span><span id="conn-text">connecting…</span></span>
-    <span class="seg" id="kinds"><span class="label">Model 2:</span></span>
   </header>
 
   <div class="verdict waiting" id="waiting">
@@ -185,8 +175,8 @@
 
   <section class="models">
     <article class="card" id="card1">
-      <div class="eyebrow">Model 1 · one number</div>
-      <h2 id="m1-title">Peak acceleration up the shin, 3 thresholds</h2>
+      <div class="eyebrow">Model 1 · decision tree</div>
+      <h2 id="m1-title">One number: the peak push up the shin, 3 learned cutoffs</h2>
       <div class="answer"><div class="badge" id="m1-badge">·</div><div class="word" id="m1-word">—</div></div>
       <div class="peakval"><span id="m1-peak">–</span> <small>g peak in the last 2 s</small></div>
       <div class="gauge">
@@ -197,8 +187,8 @@
     </article>
 
     <article class="card" id="card2">
-      <div class="eyebrow">Model 2 · all six IMU outputs</div>
-      <h2 id="m2-title">31 features from acceleration and rotation</h2>
+      <div class="eyebrow">Model 2 · random forest</div>
+      <h2 id="m2-title">100 decision trees vote on 31 measurements from all six IMU outputs</h2>
       <div class="answer"><div class="badge" id="m2-badge">·</div><div class="word" id="m2-word">—</div></div>
       <div class="bars" id="bars"></div>
       <div class="stats">
@@ -233,8 +223,6 @@ const TOPIC = "ME193/Sam/wear";
 const BROKER = "wss://broker.hivemq.com:8884/mqtt";
 const CLASSES = ["still", "walk", "run", "bike"];
 const ICON = { still: "🧍", walk: "🚶", run: "🏃", bike: "🚴" };
-const KIND_NAME = { tree: "Tree", forest: "Forest", knn: "KNN" };
-const KIND_LONG = { tree: "one decision tree", forest: "a random forest of 100 trees", knn: "7 nearest neighbours" };
 const GAUGE_MAX = 8;            // g shown on Model 1's gauge (bigger peaks pin to the right)
 const DEMO = new URLSearchParams(location.search).has("demo");
 
@@ -274,23 +262,6 @@ function buildGauge(cuts) {
   }).join("");
 }
 
-function setKinds(kinds, current) {
-  const seg = $("kinds");
-  const want = kinds.join(",");
-  if (seg.dataset.kinds !== want) {
-    seg.dataset.kinds = want;
-    seg.querySelectorAll("button").forEach(b => b.remove());
-    for (const k of kinds) {
-      const b = document.createElement("button");
-      b.textContent = KIND_NAME[k] || k;
-      b.dataset.kind = k;
-      b.onclick = () => send({ cmd: "model2", kind: k });
-      seg.appendChild(b);
-    }
-  }
-  seg.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.kind === current));
-}
-
 // ---- updates ----
 function showLive(m) {
   lastLive = Date.now();
@@ -312,7 +283,6 @@ function showLive(m) {
   $("card2").style.setProperty("--accent", `var(--${m.m2})`);
   $("m2-badge").textContent = ICON[m.m2];
   $("m2-word").textContent = m.m2;
-  $("m2-title").textContent = `31 features → ${KIND_LONG[m.m2_kind] || m.m2_kind}`;
   for (const k of CLASSES) {
     const p = m.m2_proba[k] || 0;
     $("fill-" + k).style.width = (p * 100) + "%";
@@ -350,7 +320,6 @@ function showLive(m) {
 
 function showStatus(s) {
   status = s; lastStatus = Date.now();
-  setKinds(s.model2_kinds || [], s.model2_kind);
 }
 
 function addSamples(rows) {
@@ -400,7 +369,6 @@ function drawTrace() {
 
 // ---- connection ----
 let client = null;
-function send(obj) { if (client && client.connected) client.publish(TOPIC + "/cmd", JSON.stringify(obj)); }
 
 if (!DEMO && window.mqtt) {
   client = mqtt.connect(BROKER, { clientId: "wear-dash-" + Math.random().toString(16).slice(2, 8), reconnectPeriod: 2000 });

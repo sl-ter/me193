@@ -601,3 +601,4 @@ real bugs plus a round of feature requests.
   - Checked with headless Chrome over the DevTools protocol (a throwaway venv with websocket-client in the scratchpad): live data, `?demo`, light and dark, and 390 px wide with no horizontal scroll.
   - Chrome's `--timeout` screenshots don't wait in real time, so they never showed live data.
   - Launching Chrome from VS Code's terminal set off a macOS "prevented from modifying apps" prompt (Chrome trying to update itself). It's harmless.
+- Sam asked for Model 2 to be definitive, so the dashboard's Tree/Forest/KNN selector is gone. The cards now read "Model 1 · decision tree" and "Model 2 · random forest". The board still accepts the `model2` command, but nothing sends it.

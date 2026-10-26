@@ -153,14 +153,14 @@ The board times each session itself and saves it to `data/` in its app folder, s
 - Every 0.5 s it classifies the last 2 s with both models.
 - Each answer shown is the most common of the last 3 (1.5 s), so it doesn't flicker. The board publishes them on `ME193/Sam/wear/live`.
 - The LED matrix shows **Model 1's letter on the left and Model 2's on the right** (S/W/R/B).
-- Model 2 defaults to the random forest. The dashboard's Tree / Forest / KNN buttons switch it live by sending `{"cmd": "model2", "kind": ...}`.
+- **Model 2 is the random forest.** The tree and KNN versions stay in `models.json` for comparison, and `{"cmd": "model2", "kind": ...}` on `.../cmd` can still switch the board. The dashboard has no switch, so it always shows exactly two models: Model 1 (decision tree) and Model 2 (random forest).
 
 **What the dashboard shows:**
 
 | Part | Shows |
 |---|---|
-| Model 1 card | its answer, the +Y peak on a gauge coloured by the 3 thresholds, and one sentence saying why |
-| Model 2 card | its answer, the forest's vote for each class, posture (upright vs lying, the tree's own split at 0.94 g), shin swing (gyro X std), and steps/min or pedal rpm |
+| Model 1 card (decision tree) | its answer, the +Y peak on a gauge coloured by the 3 thresholds, and one sentence saying why |
+| Model 2 card (random forest) | its answer, the forest's vote for each class, posture (upright vs lying, the tree's own split at 0.94 g), shin swing (gyro X std), and steps/min or pedal rpm |
 | Banner | whether the models agree. When Model 1 says still and Model 2 says bike, it explains why one number can't tell them apart |
 | Timeline | the last 60 s of answers, Model 1 and Model 2 |
 | Signal chart | the raw +Y acceleration for the last 5 s, with the thresholds drawn on it |

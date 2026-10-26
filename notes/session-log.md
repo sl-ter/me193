@@ -522,3 +522,25 @@ real bugs plus a round of feature requests.
 
 - After Sam's successful test run, pulled Mohammed's `b3b2dd9` ("Lower tape saturation threshold for new ring tape"). The new ring tape reads hue ~208, saturation ~52–56, so `TAPE_MIN_SATURATION` in `sumo.py` dropped from 55 to 45. The floor reads saturation ~29–41 and fails the hue check by a wide margin anyway. The README's measured-tape table was updated to match.
 - To sync again: re-clone `mohdalmheiri/ME193-Robotics`, diff `Mohammed's Projects/Sumo Wrestling/` against `SumoWrestling/` (its `unoq_app/` is our `unoq/sumo-distance/`), copy code files over, and patch README hunks so this repo's adaptations stay.
+
+## Activity wearable: plan + IMU bench check — 2026-10-26
+
+- New assignment: a UNO Q wearable that tells standing still, walking, running and air-biking apart, with two models. Model 1 uses only the peak acceleration on one axis; Model 2 uses all the IMU outputs. No neural nets. Three classmates each try one activity live. The full plan (rubric, models, data plan, assembly steps) is in the Obsidian note `me193; ActivityWearable`. Sam handles the Notion page and the reflections.
+- Decisions:
+  - The "5060" is an MPU-6050 on a GY-521.
+  - Placement: board + IMU together in Sam's 3D-printed case, in a sock-sleeve pocket on the front of the lower shin, powered by a power bank over USB-C.
+  - Orientation: USB-C up, GY-521 components out with its Y arrow toward the knee. That gives +Y up the shin, +Z forward and +X to the wearer's left.
+  - Models: decision trees, with KNN as a comparison. Both run live side by side; Model 2 is the official identifier.
+  - Testing leaves one person out, since the demo is on people the model hasn't seen.
+- Wiring: GY-521 VCC→3.3V, GND→GND, SDA→SDA, SCL→SCL (header pins by AREF), with male-to-female jumpers. XDA/XCL/AD0/INT are not connected.
+- New `ActivityWearable/unoq/imu-check/` App Lab app. The sketch scans `Wire`/`Wire1`/`Wire2` and configures the MPU-6050 (±16 g, ±2000 °/s, DLPF ~44 Hz, 100 Hz). Python prints readings at 5 Hz plus which axis is up.
+  - The scan probes each address with a 1-byte `requestFrom`, because this core's `endTransmission()` does a zero-length `i2c_write`, which STM32 I2C can reject.
+  - The Bridge calls are `provide_safe`, so they run from `__loopHook` on the loop thread. An empty `loop()` is fine.
+  - Per the variant overlay, `Wire`=i2c2, `Wire1`=i2c4, `Wire2`=i2c3.
+- First run:
+  - `Wire: 0x68`, nothing on Wire1/Wire2, so **the header SDA/SCL pins are `Wire`**.
+  - WHO_AM_I is 0x68, and ACCEL_CONFIG reads back 0x18.
+  - At rest, |a| = 0.99 g; the gyro bias is 1–3 °/s.
+  - **The Bridge round trip is about 9.5 ms per call (~106/s)**, so the logger should sample on the STM32 and send batches, not one call per sample.
+- The board rebooted once mid-session: Sam was clipping the GY-521's header leads, and a lead probably shorted something. It was fine after.
+- The board's Wi-Fi IP is now 172.16.9.166 (added to `HOSTS` in `tools/board_secrets.py`). Deploying `imu-check` stops BoardStatus until the next reboot.

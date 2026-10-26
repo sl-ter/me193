@@ -220,7 +220,7 @@
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script>
 const TOPIC = "ME193/Sam/wear";
-const BROKER = "wss://broker.hivemq.com:8884/mqtt";
+const BROKER = "wss://broker.emqx.io:8084/mqtt";
 const CLASSES = ["still", "walk", "run", "bike"];
 const ICON = { still: "🧍", walk: "🚶", run: "🏃", bike: "🚴" };
 const GAUGE_MAX = 8;            // g shown on Model 1's gauge (bigger peaks pin to the right)
@@ -230,7 +230,7 @@ const $ = id => document.getElementById(id);
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 let lastLive = 0, lastStatus = 0, status = {}, thresholds = null, direction = "+y";
 const hist1 = [], hist2 = [];
-const trace = [];               // last 5 s of acceleration along Model 1's axis
+const trace = [];               // [seq, g] for the last 5 s along Model 1's axis (seq = 10 ms ticks)
 
 // ---- static pieces ----
 for (const c of CLASSES) {
@@ -324,8 +324,9 @@ function showStatus(s) {
 
 function addSamples(rows) {
   const axis = { x: 1, y: 2, z: 3 }[direction[1]], sign = direction[0] === "-" ? -1 : 1;
-  for (const r of rows) trace.push(sign * r[axis]);
-  while (trace.length > 500) trace.shift();
+  for (const r of rows) trace.push([r[0], sign * r[axis]]);   // 25 or 100 samples a second; x comes from seq
+  const newest = trace.length ? trace[trace.length - 1][0] : 0;
+  while (trace.length && (trace[0][0] < newest - 500 || trace[0][0] > newest)) trace.shift();
 }
 
 function tick() {
@@ -360,9 +361,10 @@ function drawTrace() {
   }
   g.setLineDash([]);
   if (trace.length > 1) {
+    const newest = trace[trace.length - 1][0];
     g.strokeStyle = css("--text-primary"); g.lineWidth = 2; g.lineJoin = "round";
     g.beginPath();
-    trace.forEach((v, i) => { const x = 34 + i / 499 * (w - 34); i ? g.lineTo(x, y(v)) : g.moveTo(x, y(v)); });
+    trace.forEach(([seq, v], i) => { const x = 34 + (1 - (newest - seq) / 500) * (w - 34); i ? g.lineTo(x, y(v)) : g.moveTo(x, y(v)); });
     g.stroke();
   }
 }

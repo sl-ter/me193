@@ -602,3 +602,22 @@ real bugs plus a round of feature requests.
   - Chrome's `--timeout` screenshots don't wait in real time, so they never showed live data.
   - Launching Chrome from VS Code's terminal set off a macOS "prevented from modifying apps" prompt (Chrome trying to update itself). It's harmless.
 - Sam asked for Model 2 to be definitive, so the dashboard's Tree/Forest/KNN selector is gone. The cards now read "Model 1 · decision tree" and "Model 2 · random forest". The board still accepts the `model2` command, but nothing sends it.
+
+## Activity wearable: "goes offline after a while" fixed — 2026-10-26
+
+- Symptom: the dashboard went offline after a while, and Sam rebooted to recover. When it happened, the matrix still showed changing letters, so the app was alive and the network path was what had broken.
+- Findings:
+  - **Wi-Fi drops:** wlan0 disconnected for about 2 s (one per boot in journalctl), and the board switches APs as Sam walks the hall (3 AP BSSIDs in the kernel log). The app kept an ESTABLISHED socket to HiveMQ with data queued, while nothing arrived at the laptop.
+  - **Slow broker:** HiveMQ itself stalled CONNACK for 5–9 s on 3 of 8 connects, from both the laptop and the board.
+  - **Corrupt log:** the Docker log file had null bytes from earlier power pulls, so `docker logs` failed.
+- Fixes in `main.py`:
+  - `mqtt_watchdog`: the board subscribes to `.../status` and checks that its own `board` id echoes back. After 8 s without an echo it reconnects (disconnect, `loop_stop`, `connect_async`, `loop_start`).
+  - keepalive 30 → 15 s; `reconnect_delay_set(1, 5)`.
+  - `.../imu` sends every 4th sample when not recording (25 Hz). `record.py`'s `recent()` and the dashboard's signal chart now go by `seq` instead of counting samples.
+- **Broker switched to `broker.emqx.io`** in `main.py`, `common.py` and `dashboard.html` (`wss://broker.emqx.io:8084/mqtt`). It connected in about 0.4 s on 8/8 from both sides.
+- Removed the container (`docker rm activity-wearable-main-1`) so the log is fresh; logs are readable again.
+- Verified:
+  - Watchdog: tested on the laptop with stubbed hardware on topic `ME193/Sam/weartest`; it reconnects about 8 s after messages are cut off, then echo resumes.
+  - Board on EMQX: live answers twice a second, sensor samples at 25 Hz when idle.
+  - Dashboard: live at 101 Hz via headless Chrome.
+  - `record.py`: connects, and its orientation check works on the 25 Hz idle data.

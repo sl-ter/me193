@@ -128,14 +128,14 @@ The board times each session itself and saves it to `data/` in its app folder, s
   - Each sample carries `seq`, a 10 ms tick count, so a gap in `seq` is a missed sample.
   - The sketch also draws the frames Python sends to the matrix: a countdown digit, the activity letter with a progress bar, and a check mark when saved.
 - **Python:**
-  - **Network:** MQTT on `broker.hivemq.com`, under the `ME193/Sam/wear/` topic prefix:
+  - **Network:** MQTT on `broker.emqx.io`, under the `ME193/Sam/wear/` topic prefix:
 
     | Topic | Direction | Carries |
     |---|---|---|
     | `cmd` | laptop → board | commands |
     | `status` | board → laptop | state, twice a second |
     | `event` | board → laptop | `recording`, `saved`, `aborted`, `error` |
-    | `imu` | board → laptop | live samples, 10 messages a second |
+    | `imu` | board → laptop | live samples, 10 messages a second: every sample while recording, every 4th (25 Hz) otherwise |
 
   - **Files:** writes `data/<person>_<activity>_<time>.csv` in the app folder, which the container mounts as `/app`.
   - **CSV format:** two `#` header lines (person, leg, activity, label, rates, axes), the columns `t_s,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps`, and an `# end` line with the row, gap and drop counts.
@@ -147,7 +147,7 @@ The board times each session itself and saves it to `data/` in its app folder, s
    ```bash
    open ActivityWearable/dashboard.html
    ```
-   It's one HTML file. It loads `mqtt.js` 5.10.1 from jsDelivr and connects to `wss://broker.hivemq.com:8884/mqtt`, so it needs internet but no install. `dashboard.html?demo` shows made-up data for checking the layout without the board.
+   It's one HTML file. It loads `mqtt.js` 5.10.1 from jsDelivr and connects to `wss://broker.emqx.io:8084/mqtt`, so it needs internet but no install. `dashboard.html?demo` shows made-up data for checking the layout without the board.
 
 **What the board does:**
 - Every 0.5 s it classifies the last 2 s with both models.
@@ -173,7 +173,12 @@ The board times each session itself and saves it to `data/` in its app folder, s
 ## Network notes (2026-10-26)
 
 - **Registration:** Tufts_Wireless only gives the board internet once its MAC is registered (`14:b5:cd:f7:fd:9b`; the `B6:28:…` address in older notes was a randomized one). Until then every connection is redirected to `device-registration-prod-04.it.tufts.edu`.
-- **The broker:** `test.mosquitto.org:1883` (the class default) times out from both Tufts_Wireless and Tufts Secure, so this project uses `broker.hivemq.com`.
+- **The broker:** `test.mosquitto.org:1883` (the class default) times out from both Tufts_Wireless and Tufts Secure. `broker.hivemq.com` worked, but it stalled for 5–9 s on 3 of 8 connects, from both the laptop and the board. `broker.emqx.io` connected in about 0.4 s on 8 of 8 from both, so this project uses EMQX.
+- **"The dashboard goes offline after a while":** the board's Wi-Fi drops for about 2 s now and then (once per boot in the logs), and it switches access points as you walk down the hall. That can leave the MQTT connection open but dead. Two fixes:
+  - **A self-check:** the board listens for its own status on `.../status`. If none has come back for 8 s, it reconnects (`mqtt_watchdog`).
+  - **Faster dead-connection detection:** a 15 s keepalive and 1–5 s reconnect retries.
+  - Tested on the laptop against the real broker, on a separate topic: cutting off its messages makes it reconnect after about 8 s, and it recovers as soon as messages flow again.
+- **Unreadable app log:** pulling the power while Docker is writing can corrupt the container log (`docker logs` then fails with `invalid character '\x00'`). Fix: `arduino-app-cli app stop ...`, then `docker rm activity-wearable-main-1`, then deploy again.
 - **SSH and deploy over Wi-Fi:** the laptop on Tufts Secure can reach the board on Tufts_Wireless, so `deploy.py` and `pull_data.py` work over Wi-Fi with `UNOQ_HOST`.
 - **The board's clock isn't NTP-synced** (it reads 1 Oct), so each session's start time in the file comes from the laptop.
 

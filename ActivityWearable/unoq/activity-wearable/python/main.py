@@ -18,7 +18,7 @@ Topics (must match ActivityWearable/common.py):
                                / {"cmd": "model2", "kind": "tree" | "forest" | "knn"}
   .../status  board -> laptop  twice a second
   .../event   board -> laptop  recording / saved / aborted / error
-  .../imu     board -> laptop  live samples, 10 messages a second
+  .../imu     board -> laptop  live samples, 10 messages a second (every 4th sample when not recording)
   .../live    board -> laptop  both models' answers, twice a second
 """
 import json
@@ -36,7 +36,7 @@ from arduino.app_utils import App, Bridge, Frame
 import classify
 import features as F
 
-BROKER = "broker.hivemq.com"   # test.mosquitto.org:1883 is unreachable from Tufts networks (2026-10-26)
+BROKER = "broker.emqx.io"   # test.mosquitto.org:1883 is unreachable from Tufts networks; broker.hivemq.com stalled ~8 s on 3 of 8 connects (2026-10-26)
 PORT = 1883
 TOPIC = "ME193/Sam/wear"
 DATA_DIR = "/app/data"
@@ -49,6 +49,9 @@ LIVE_EVERY = 0.1            # seconds between live-sample messages
 STATUS_EVERY = 0.5
 SAVED_SHOW_S = 3.0          # how long the matrix shows the check mark
 SMOOTH = 3                  # live answer = most common of the last 3 (1.5 s), so it doesn't flicker
+IDLE_EVERY_NTH = 4          # raw samples on .../imu when not recording: every 4th (25 Hz) is plenty for the display
+ECHO_TIMEOUT_S = 8.0        # no echo of our own status through the broker for this long -> reconnect
+BOARD_ID = f"wear-board-{int(time.time())}"
 MODELS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json")
 
 AXES_NOTE = "+Y up the shin (toward the knee), +Z forward out of the shin, +X to the wearer's left"
@@ -60,21 +63,56 @@ commands = queue.Queue()
 
 def on_connect(client, userdata, flags, reason_code, properties):
     client.subscribe(TOPIC + "/cmd")
+    client.subscribe(TOPIC + "/status")   # to hear our own status come back (mqtt_watchdog)
     print(f"MQTT connected ({reason_code}), listening on {TOPIC}/cmd", flush=True)
 
 
+last_echo = time.time()     # last time our own status came back through the broker
+last_kick = 0.0
+
+
 def on_message(client, userdata, msg):
+    global last_echo
     try:
-        commands.put(json.loads(msg.payload))
+        data = json.loads(msg.payload)
     except ValueError:
-        print("ignored a command that isn't JSON:", msg.payload[:80], flush=True)
+        print("ignored a message that isn't JSON:", msg.payload[:80], flush=True)
+        return
+    if msg.topic.endswith("/status"):
+        if data.get("board") == BOARD_ID:
+            last_echo = time.time()
+    else:
+        commands.put(data)
 
 
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"wear-board-{int(time.time())}")
+def start_mqtt():
+    client.connect_async(BROKER, PORT, keepalive=15)   # retries in the background until Wi-Fi is up
+    client.loop_start()
+
+
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=BOARD_ID)
 client.on_connect = on_connect
 client.on_message = on_message
-client.connect_async(BROKER, PORT, keepalive=30)   # retries in the background until Wi-Fi is up
-client.loop_start()
+client.reconnect_delay_set(min_delay=1, max_delay=5)
+start_mqtt()
+
+
+def mqtt_watchdog(now):
+    """A Wi-Fi drop (e.g. switching access points down the hall) can leave the
+    connection open but dead, with paho still queueing into it. Our own status
+    echoing back through the broker proves the whole path works; if it stops,
+    start the connection over."""
+    global last_kick, last_echo
+    if now - last_echo < ECHO_TIMEOUT_S or now - last_kick < ECHO_TIMEOUT_S:
+        return
+    print(f"MQTT: no echo for {now - last_echo:.0f} s, reconnecting", flush=True)
+    last_kick = now
+    try:
+        client.disconnect()
+    except Exception:
+        pass
+    client.loop_stop()
+    start_mqtt()
 
 
 def publish(sub, payload):
@@ -345,7 +383,7 @@ def publish_status(now):
         recent.popleft()
     saved = len([f for f in os.listdir(DATA_DIR) if f.endswith(".csv")]) if os.path.isdir(DATA_DIR) else 0
     publish("status", {
-        "t": now, "state": session.state if session else "idle",
+        "board": BOARD_ID, "t": now, "state": session.state if session else "idle",
         "session": session.name if session else None,
         "remaining": round(session.remaining(now), 1) if session else None,
         "imu": imu_state, "rate_hz": round(len(recent) / 2.0, 1),
@@ -392,7 +430,8 @@ def loop():
         return
 
     recent.extend([now] * len(samples))
-    live.extend(samples)
+    recording = session is not None and session.state == "recording"
+    live.extend(samples if recording else [x for x in samples if x[0] % IDLE_EVERY_NTH == 0])
     if live_model.add(samples):
         try:
             publish("live", live_model.classify(now))
@@ -420,6 +459,7 @@ def loop():
     if now - last_status >= STATUS_EVERY:
         publish_status(now)
         last_status = now
+    mqtt_watchdog(now)
 
     update_matrix(now)
     time.sleep(0.02)

@@ -165,8 +165,13 @@ def bar(fraction, width=40, color=CYAN):
 
 # ---- Live numbers and checks ------------------------------------------------
 def recent(board, seconds):
-    n = int(seconds * RATE_HZ)
-    return list(board.samples)[-n:]
+    """Samples from the last `seconds`, by their seq (the board sends every 4th
+    sample when it isn't recording, so counting samples would be wrong)."""
+    s = list(board.samples)
+    if not s:
+        return []
+    newest = s[-1][0]
+    return [r for r in s if newest - seconds * RATE_HZ < r[0] <= newest]
 
 
 def motion(board):
@@ -181,7 +186,7 @@ def motion(board):
 def orientation(board):
     """Mean accel over the last second, plus (ok, text) checks."""
     s = recent(board, 1.0)
-    if len(s) < 50:
+    if len(s) < 15:
         return None, [(False, "Waiting for live data from the wearable...")]
     ax, ay, az = (sum(r[i] for r in s) / len(s) for i in (1, 2, 3))
     mags = [(r[1] ** 2 + r[2] ** 2 + r[3] ** 2) ** 0.5 for r in s]

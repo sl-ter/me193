@@ -5,7 +5,7 @@ The MQTT names must match unoq/activity-wearable/python/main.py.
 from dataclasses import dataclass, field
 from pathlib import Path
 
-BROKER = "broker.hivemq.com"   # test.mosquitto.org:1883 is unreachable from Tufts networks (2026-10-26)
+BROKER = "broker.emqx.io"   # test.mosquitto.org:1883 is unreachable from Tufts networks; broker.hivemq.com stalled ~8 s on 3 of 8 connects (2026-10-26)
 PORT = 1883
 TOPIC = "ME193/Sam/wear"
 RATE_HZ = 100

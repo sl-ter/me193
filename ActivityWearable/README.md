@@ -164,11 +164,36 @@ The board times each session itself and saves it to `data/` in its app folder, s
 | Banner | whether the models agree. When Model 1 says still and Model 2 says bike, it explains why one number can't tell them apart |
 | Timeline | the last 60 s of answers, Model 1 and Model 2 |
 | Signal chart | the raw +Y acceleration for the last 5 s, with the thresholds drawn on it |
+| How far | the current stretch of activity: distance range for walk/run, pedal turns for bike, duration for still; the last 5 stretches; height and calibration controls |
 
 **Checked:**
 - Replaying recorded sessions through the board's `Live` class gave about 0.6 ms per answer on the laptop. On slow air-biking, Model 1 said still 87/87 times and Model 2 said bike 87/87.
 - The board publishes an answer every ~0.5 s, and the Model 2 switch round-trips.
 - The dashboard was screenshotted with headless Chrome: live, demo, light/dark, and 390 px wide (no sideways scroll).
+
+## How far (distance per stretch of activity)
+
+**Strides (board, `main.py`):** every sample, the board watches −gx, the shin's forward swing.
+- It counts a stride when −gx rises past 120 °/s, re-arms once it falls below 40 °/s, and never counts two within 0.55 s.
+- On all 27 recorded sessions, the count was within a median 3% of each session's stride rate, and 0 on every still session.
+- While air-biking, the same swing comes once per pedal turn.
+- The 0.55 s gap fixed double counts on fast runs (39 → 34 strides). It caps counting at 1.8 strides a second (about 218 steps a minute).
+
+**Stretches:** a stretch ("bout") is a run of the same Model 2 answer.
+- It ends only when a different answer holds for 2 answers in a row (1 s), so a flicker at a hallway turnaround doesn't split a walk.
+- `.../live` carries the current stretch (label, duration, strides), `strides_total`, and the last 6 stretches. `.../bout` gets each one as it ends.
+- Replaying TEOROM's stand → walk → run → lie → bike sessions back to back gave 5 stretches. Their lengths matched the sessions to within about 2 s, with 36 / 58 / 32 strides (walk / run / bike).
+
+**Distance (dashboard):** strides × stride length, shown as a range.
+- Stride length isn't measured. Without calibration it uses rough rules of thumb: stride ≈ 0.74–0.90 × height walking and 1.0–1.6 × height running. If no height is entered, 155–195 cm is assumed. A ±5% allowance for counting error is added on top.
+- These ratios aren't from a source I could verify. Step length does scale with height, but published ratios vary; treat them as heuristics.
+- **Calibrate** to narrow it: pick walk or run, enter a measured distance, press Start, cover the distance, press Stop. The stride length comes out as metres ÷ strides, and the range becomes about ±8% plus the counting allowance.
+- Height and calibration are saved in that browser (localStorage).
+- Air-biking shows pedal turns (it goes nowhere), and still shows only its duration.
+- **Known limits:**
+  - each activity is recognised about 1.5 s late, so a stretch's first stride or two can land in the one before
+  - turns and pace changes add error
+  - a calibration only holds for that person and about that pace
 
 ## Network notes (2026-10-26)
 

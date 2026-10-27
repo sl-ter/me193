@@ -145,6 +145,29 @@
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
   canvas { width: 100%; height: 120px; display: block; }
 
+  /* How far */
+  .stack { display: grid; gap: 16px; min-width: 0; }
+  .far-now { display: flex; align-items: center; gap: 14px; margin: 4px 0 6px; }
+  .far-now .badge { width: 64px; height: 64px; border-radius: 16px; font-size: 36px; }
+  .far-big { font-size: 40px; font-weight: 750; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .far-range { color: var(--text-secondary); font-size: 15px; font-variant-numeric: tabular-nums; }
+  .far-sub { color: var(--text-secondary); font-size: 14px; margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+  .far-controls { display: grid; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; font-size: 14px; color: var(--text-secondary); }
+  .far-controls .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .far-controls input, .far-controls select, .far-controls button {
+    font: inherit; font-size: 14px; color: var(--text-primary); background: var(--surface-0);
+    border: 1px solid var(--border); border-radius: 8px; padding: 5px 9px;
+  }
+  .far-controls input { width: 92px; }
+  .far-controls button { cursor: pointer; }
+  .far-controls button.primary { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+  .far-note { font-size: 12.5px; color: var(--text-muted); line-height: 1.45; }
+  table.bouts { width: 100%; border-collapse: collapse; font-size: 14px; margin: 4px 0 12px; font-variant-numeric: tabular-nums; }
+  table.bouts td { padding: 5px 4px; border-top: 1px solid var(--border); color: var(--text-secondary); }
+  table.bouts td:first-child { color: var(--text-primary); white-space: nowrap; }
+  table.bouts td:last-child { text-align: right; color: var(--text-primary); }
+  table.bouts i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
   .offline .card, .offline .verdict, .offline .bottom { opacity: .45; }
   .waiting { display: none; }
   .offline .waiting { display: block; }
@@ -202,17 +225,33 @@
   <div class="verdict" id="verdict">–</div>
 
   <section class="bottom">
-    <div class="panel">
-      <h3>Last 60 seconds</h3>
-      <div class="timeline">
-        <span>Model 1</span><div class="cells" id="cells1"></div>
-        <span>Model 2</span><div class="cells" id="cells2"></div>
+    <div class="stack">
+      <div class="panel">
+        <h3>Last 60 seconds</h3>
+        <div class="timeline">
+          <span>Model 1</span><div class="cells" id="cells1"></div>
+          <span>Model 2</span><div class="cells" id="cells2"></div>
+        </div>
+        <div class="legend" id="legend"></div>
       </div>
-      <div class="legend" id="legend"></div>
+      <div class="panel">
+        <h3 id="trace-title">Acceleration up the shin, last 5 s (Model 1's input)</h3>
+        <canvas id="trace"></canvas>
+      </div>
     </div>
-    <div class="panel">
-      <h3 id="trace-title">Acceleration up the shin, last 5 s (Model 1's input)</h3>
-      <canvas id="trace"></canvas>
+    <div class="panel" id="far">
+      <h3>How far: this stretch of <span id="far-label">–</span></h3>
+      <div class="far-now"><div class="badge" id="far-badge">·</div>
+        <div><div class="far-big" id="far-big">–</div><div class="far-range" id="far-range"></div></div></div>
+      <div class="far-sub" id="far-sub"></div>
+      <table class="bouts" id="bouts"></table>
+      <div class="far-controls">
+        <div class="row">Wearer's height <input id="height" placeholder="6'5 or 196"> <span id="height-ok"></span></div>
+        <div class="row">Calibrate: <select id="cal-gait"><option value="walk">walk</option><option value="run">run</option></select>
+          a measured <input id="cal-m" placeholder="metres" inputmode="decimal"> m
+          <button id="cal-btn" class="primary">Start</button> <span id="cal-msg"></span></div>
+        <div class="far-note" id="far-note"></div>
+      </div>
     </div>
   </section>
 </div>
@@ -369,6 +408,121 @@ function drawTrace() {
   }
 }
 
+// ---- How far -------------------------------------------------------------
+// Distance = strides counted by the board x stride length. A stride is two
+// steps (the sensor is on one leg). Stride length isn't measured; without a
+// calibration it comes from rules of thumb, shown as a range.
+const STRIDE_PER_HEIGHT = { walk: [0.74, 0.90], run: [1.0, 1.6] };   // stride length / height (rough)
+const DEFAULT_HEIGHT_M = [1.55, 1.95];                                // if no height is entered
+const COUNT_ERR = 0.05;        // stride counting was ~3% off (median) on our recordings; allow 5%
+const CAL_SPREAD = 0.08;       // a calibrated stride still varies with pace
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem("wear." + k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem("wear." + k, JSON.stringify(v)); } catch {} },
+};
+let heightM = store.get("height_m");
+const calStride = store.get("cal_stride") || {};    // {walk: m, run: m}
+let cal = null;                                      // {gait, metres, strides0} while calibrating
+let latestLive = null;
+
+function parseHeight(text) {
+  const t = text.trim().toLowerCase();
+  let m = t.match(/^(\d)\s*(?:'|ft|\s)\s*(\d{1,2})?\s*(?:"|in)?$/);
+  if (m) return (+m[1] * 12 + (+m[2] || 0)) * 0.0254;
+  m = t.match(/^(\d+(?:\.\d+)?)\s*(cm|m)?$/);
+  if (!m) return null;
+  const v = +m[1];
+  if (m[2] === "m" || v < 3) return v;
+  return v / 100;
+}
+function fmtHeight(h) { const inches = Math.round(h / 0.0254); return `${Math.floor(inches / 12)}'${inches % 12}" (${Math.round(h * 100)} cm)`; }
+function fmtDist(m) { return m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m"; }
+function fmtRange(lo, hi) { return hi < 1000 ? `${Math.round(lo)}–${Math.round(hi)} m` : `${fmtDist(lo)}–${fmtDist(hi)}`; }
+function fmtDur(s) { s = Math.round(s); return s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`; }
+
+function strideRange(gait) {
+  if (calStride[gait]) return [calStride[gait] * (1 - CAL_SPREAD), calStride[gait] * (1 + CAL_SPREAD)];
+  const [kLo, kHi] = STRIDE_PER_HEIGHT[gait];
+  const [hLo, hHi] = heightM ? [heightM, heightM] : DEFAULT_HEIGHT_M;
+  return [kLo * hLo, kHi * hHi];
+}
+function distRange(gait, strides) {
+  const [lo, hi] = strideRange(gait);
+  return [strides * lo * (1 - COUNT_ERR), strides * hi * (1 + COUNT_ERR)];
+}
+function boutText(b) {
+  if (b.label === "walk" || b.label === "run") {
+    const [lo, hi] = distRange(b.label, b.strides);
+    return { big: "≈ " + fmtDist((lo + hi) / 2), range: `likely ${fmtRange(lo, hi)}`,
+             sub: `${b.strides} strides (${b.strides * 2} steps) in ${fmtDur(b.duration_s)}`, short: fmtRange(lo, hi) };
+  }
+  if (b.label === "bike") {
+    return { big: `${b.strides} pedal turn${b.strides === 1 ? "" : "s"}`, range: "air-biking goes nowhere, so no distance",
+             sub: `in ${fmtDur(b.duration_s)}`, short: `${b.strides} turns` };
+  }
+  return { big: fmtDur(b.duration_s), range: "not moving", sub: "", short: "0 m" };
+}
+function showFar(m) {
+  latestLive = m;
+  const b = m.bout;
+  if (!b) return;
+  const t = boutText(b);
+  $("far").style.setProperty("--accent", `var(--${b.label})`);
+  $("far-badge").textContent = ICON[b.label];
+  $("far-label").textContent = { still: "standing still", walk: "walking", run: "running", bike: "air-biking" }[b.label];
+  $("far-big").textContent = t.big;
+  $("far-range").textContent = t.range;
+  $("far-sub").textContent = t.sub;
+  $("bouts").innerHTML = (m.recent_bouts || []).slice(0, 5).map(r => {
+    const x = boutText(r);
+    return `<tr><td><i style="background:var(--${r.label})"></i>${r.label}</td><td>${fmtDur(r.duration_s)}</td><td>${r.label === "walk" || r.label === "run" ? r.strides * 2 + " steps" : ""}</td><td>${x.short}</td></tr>`;
+  }).join("");
+  if (cal) $("cal-msg").textContent = `${m.strides_total - cal.strides0} strides so far…`;
+  updateNote();
+}
+function updateNote() {
+  const parts = ["walk", "run"].map(g => {
+    const [lo, hi] = strideRange(g);
+    return `${g} stride ${lo.toFixed(2)}–${hi.toFixed(2)} m` + (calStride[g] ? " (calibrated)" : "");
+  });
+  $("far-note").innerHTML =
+    `Distance = strides × stride length. Strides (one forward swing of the shin = two steps) are counted to about 3%. ` +
+    `Stride length isn't measured, so it's a range: ${parts.join(", ")}` +
+    (heightM ? "" : ` (height unknown, so 155–195 cm assumed)`) +
+    `. ${calStride.walk && calStride.run ? "" : "Uncalibrated it uses rough rules of thumb (0.74–0.90 × height walking, 1.0–1.6 × running); calibrating on a measured distance narrows it to about ±10%. "}` +
+    `The activity is recognised about 1.5 s late, so a stretch's first stride or two can land in the one before.`;
+}
+$("height").value = heightM ? fmtHeight(heightM).split(" ")[0] : "";
+$("height-ok").textContent = heightM ? "✓ " + fmtHeight(heightM) : "";
+$("height").addEventListener("change", e => {
+  heightM = parseHeight(e.target.value);
+  if (heightM && (heightM < 1.0 || heightM > 2.3)) heightM = null;
+  store.set("height_m", heightM);
+  $("height-ok").textContent = heightM ? "✓ " + fmtHeight(heightM) : (e.target.value ? "didn't understand that" : "");
+  if (latestLive) showFar(latestLive); else updateNote();
+});
+$("cal-btn").addEventListener("click", () => {
+  if (!cal) {
+    const metres = parseFloat($("cal-m").value);
+    if (!(metres > 0)) { $("cal-msg").textContent = "enter the measured distance first"; return; }
+    if (!latestLive) { $("cal-msg").textContent = "waiting for the wearable"; return; }
+    cal = { gait: $("cal-gait").value, metres, strides0: latestLive.strides_total };
+    $("cal-btn").textContent = "Stop";
+    $("cal-msg").textContent = `go: ${cal.gait} the ${metres} m, then press Stop`;
+  } else {
+    const n = latestLive.strides_total - cal.strides0;
+    if (n < 4) { $("cal-msg").textContent = `only ${n} strides counted; try a longer distance`; }
+    else {
+      calStride[cal.gait] = cal.metres / n;
+      store.set("cal_stride", calStride);
+      $("cal-msg").textContent = `${cal.gait} stride = ${(cal.metres / n).toFixed(2)} m (${n} strides over ${cal.metres} m)`;
+    }
+    cal = null; $("cal-btn").textContent = "Start";
+    if (latestLive) showFar(latestLive);
+  }
+});
+updateNote();
+
 // ---- connection ----
 let client = null;
 
@@ -377,14 +531,14 @@ if (!DEMO && window.mqtt) {
   client.on("connect", () => client.subscribe([TOPIC + "/live", TOPIC + "/status", TOPIC + "/imu"]));
   client.on("message", (topic, payload) => {
     let m; try { m = JSON.parse(payload.toString()); } catch { return; }
-    if (topic.endsWith("/live")) showLive(m);
+    if (topic.endsWith("/live")) { showLive(m); showFar(m); }
     else if (topic.endsWith("/status")) showStatus(m);
     else if (topic.endsWith("/imu")) addSamples(m.s || []);
   });
 } else if (DEMO) {
   // Made-up data that cycles through the activities, for checking the layout.
   const cuts = [1.2024, 1.7133, 3.6936], plan = ["still", "walk", "run", "bike"];
-  let t = 0, seq = 0;
+  let t = 0, seq = 0, demoBout = { label: null }, demoRecent = [], demoTotal = 0;
   setInterval(() => {
     t += 0.5;
     const act = plan[Math.floor(t / 6) % 4];
@@ -392,9 +546,17 @@ if (!DEMO && window.mqtt) {
     const m1 = peak < cuts[0] ? "still" : peak < cuts[1] ? "bike" : peak < cuts[2] ? "walk" : "run";
     const proba = Object.fromEntries(CLASSES.map(c => [c, c === act ? 0.9 : 0.1 / 3]));
     showStatus({ rate_hz: 100, state: "idle", model2_kind: "forest", model2_kinds: ["tree", "forest", "knn"] });
-    showLive({ m1, m1_peak: peak, m1_thresholds: cuts, m1_direction: "+y", m2: act, m2_kind: "forest", m2_proba: proba,
+    const into = t % 6, strides = Math.floor(into * { still: 0, walk: 0.9, run: 1.4, bike: 1.1 }[act]);
+    if (act !== demoBout.label) {
+      if (demoBout.label) demoRecent.unshift({ ...demoBout });
+      demoBout = { id: demoRecent.length, label: act, start: t, duration_s: 0, strides: 0 };
+    }
+    demoBout.duration_s = into; demoBout.strides = strides; demoTotal += strides - (demoBout._s || 0); demoBout._s = strides;
+    const live = { m1, m1_peak: peak, m1_thresholds: cuts, m1_direction: "+y", m2: act, m2_kind: "forest", m2_proba: proba,
                acc_y_mean: act === "bike" ? 0.2 : 0.98, gyro_x_std: act === "still" ? 1 : 140,
-               cadence_hz: { still: 0, walk: 0.9, run: 1.4, bike: 1.1 }[act], cadence_share: act === "still" ? 0 : 0.4 });
+               cadence_hz: { still: 0, walk: 0.9, run: 1.4, bike: 1.1 }[act], cadence_share: act === "still" ? 0 : 0.4,
+               strides_total: demoTotal, bout: demoBout, recent_bouts: demoRecent.slice(0, 6) };
+    showLive(live); showFar(live);
     const rows = [];
     for (let i = 0; i < 50; i++, seq++) {
       const s = seq / 100, base = act === "bike" ? 0.2 : 1;

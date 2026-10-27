@@ -621,3 +621,20 @@ real bugs plus a round of feature requests.
   - Board on EMQX: live answers twice a second, sensor samples at 25 Hz when idle.
   - Dashboard: live at 101 Hz via headless Chrome.
   - `record.py`: connects, and its orientation check works on the 25 Hz idle data.
+
+## Activity wearable: "How far" distance per activity stretch — 2026-10-27
+
+- Sam asked for an estimate of how far each activity went, with its limits shown.
+- **Stride counter on the board** (`Live.add`): counts −gx swing peaks: enter 120 °/s, re-arm below 40 °/s, at least 0.55 s apart.
+  - Tuned on all 27 sessions against each session's spectral stride rate: median error about 3%, 0 strides on still sessions.
+  - Raising the gap from 0.45 to 0.55 s fixed double counts on fast runs.
+  - −gx was chosen because its peaks come about once per stride (+gx gives about two per walking stride).
+- **Bouts** (`update_bout`): a new Model 2 answer must hold for 2 answers before a new bout starts. `.../live` carries `bout`, `strides_total` and `recent_bouts` (6); `.../bout` gets each bout as it ends.
+  - Replaying TEOROM stand → walk → run → lie → bike: 5 bouts, lengths within about 2 s of the sessions.
+- **Dashboard "How far" panel** (moved into the bottom row, beside the timeline + signal):
+  - Distance = strides × stride length, shown as a range. The rules of thumb: 0.74–0.90 × height walking, 1.0–1.6 × running. With no height, 155–195 cm is assumed. Plus ±5% counting.
+  - Height input (parses 6'5 / 196 / 1.96 m / 5ft 8in). Walk/run calibration over a measured distance gives ±8%. Both are saved in localStorage.
+  - Bike shows pedal turns; still shows its duration.
+  - Tested in headless Chrome: parsing, ranges, and calibration (18 strides over 30 m → 1.67 m stride).
+- **Sources:** a web search found only weak support for a fixed step/height ratio. Scientific American says pedometers use the height link; a treadmill study found step length related to height (R² about 0.4). So the ratios are labelled as rough heuristics in the UI and README.
+- Deployed. The board's live messages carry the bout fields.

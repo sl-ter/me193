@@ -638,3 +638,11 @@ real bugs plus a round of feature requests.
   - Tested in headless Chrome: parsing, ranges, and calibration (18 strides over 30 m → 1.67 m stride).
 - **Sources:** a web search found only weak support for a fixed step/height ratio. Scientific American says pedometers use the height link; a treadmill study found step length related to height (R² about 0.4). So the ratios are labelled as rough heuristics in the UI and README.
 - Deployed. The board's live messages carry the bout fields.
+
+## Activity wearable: models overview figure — 2026-10-28
+
+- For the Notion page's "graphical representation of the models": `ActivityWearable/figure_models.py` draws `figures/models_overview.png`.
+  - Left: Model 1's learned tree as it really is (≤3.69 → ≤1.71 → ≤1.20 g, giving run / walk / bike / still).
+  - Right: Model 2's forest, showing 3 real trees' first questions in plain English (all of them send "yes" to still), "… 97 more", the vote, and an example vote that's labelled as an example.
+  - Both cards carry the held-out accuracy (80% / 99%).
+  - Everything shown is read from `models.json` and `results.json`, so re-run the script after `train.py`.

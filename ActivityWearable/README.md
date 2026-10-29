@@ -257,6 +257,7 @@ Results, 2026-10-26: 1569 windows from SL, TEOROM and MAYA.
 
 | Figure | Shows |
 |---|---|
+| `models_overview.png` | both models as one diagram: Model 1's 3-question tree, and Model 2's forest (3 real trees' first questions, then the vote). Drawn by `figure_models.py` from `models.json` + `results.json` |
 | `model1_peaks.png` | every window's +Y peak by activity, with the 3 thresholds |
 | `model1_directions.png` | Model 1's held-out accuracy for each of the 6 directions |
 | `confusion.png` | Model 1 vs Model 2 (forest), held out |
@@ -273,6 +274,7 @@ Results, 2026-10-26: 1569 windows from SL, TEOROM and MAYA.
 | `record.py` | guided recording session (laptop) |
 | `pull_data.py` | copies sessions off the board into `data/` |
 | `train.py` | windows, leave-one-person-out evaluation, figures, `models.json` |
+| `figure_models.py` | draws `figures/models_overview.png` (run after `train.py`) |
 | `dashboard.html` | live demo display (browser, MQTT over WebSockets) |
 | `figures/` | the figures + `results.json` |
 | `unoq/activity-wearable/` | the wearable's App Lab app (sketch + Python). `python/features.py` (windows + features) and `python/classify.py` (runs `models.json` with numpy only) are shared with `train.py`, so the laptop and the board compute features identically |

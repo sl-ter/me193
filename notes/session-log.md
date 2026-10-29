@@ -646,3 +646,17 @@ real bugs plus a round of feature requests.
   - Right: Model 2's forest, showing 3 real trees' first questions in plain English (all of them send "yes" to still), "… 97 more", the vote, and an example vote that's labelled as an example.
   - Both cards carry the held-out accuracy (80% / 99%).
   - Everything shown is read from `models.json` and `results.json`, so re-run the script after `train.py`.
+
+## Wall stop loss regression — 2026-10-29
+
+- Class handout "Solving things by minimizing a loss or error": fit `speed = m·reflection + b` by gradient descent, in Excel first and then Python.
+- New folder `wallstop_lossregression/`:
+  - `annacode-data.csv`: Sam's logged run from Anna's site (time, reflection, speed; 5 approaches).
+  - The fit uses the 120 rows with reflection > 0 and speed ≠ 0, i.e. the robot sees the wall and is still slowing.
+  - `build_workbook.py` → `gradient_descent.xlsx`: example tabs (handout's y = 2x data, raw and centered) plus wall tabs (raw and standardized), one formula row per epoch, with SLOPE/INTERCEPT check cells.
+  - `wall_fit.py`: the same thing in numpy.
+- Result: speed ≈ 0.153·reflection − 17.6 (MSE 8.7), matching `np.polyfit`.
+- Raw x blows up at lr 0.0005 because reflection spans 6–96. Centering alone isn't enough (lr must be < ~0.0017). Standardizing (÷ std, like Anna's code) converges in about 20 epochs at lr 0.5.
+- The handout's centered-intercept fix `mean(x) + b` should be `b − m·mean(x)`; the README notes this.
+- Bug fixed along the way: renaming openpyxl sheets *after* adding charts leaves the charts pointing at `'Sheet'`, which Excel then reports as a broken external link (blank chart + "UNABLE TO REFRESH"). Set sheet titles before building charts.
+- Added `openpyxl` (+ `et-xmlfile`) to the root requirements.

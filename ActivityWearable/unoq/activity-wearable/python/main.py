@@ -33,6 +33,7 @@ import json
 import os
 import queue
 import re
+import threading
 import time
 from collections import deque
 from datetime import datetime
@@ -82,7 +83,7 @@ phone_msgs = queue.Queue()      # (arrival time, message) from the phone
 
 
 def on_connect(client, userdata, flags, reason_code, properties):
-    client.subscribe(TOPIC + "/cmd")
+    client.subscribe(TOPIC + "/cmd", qos=1)
     client.subscribe(TOPIC + "/status")   # to hear our own status come back (mqtt_watchdog)
     client.subscribe(TOPIC + "/phone")
     print(f"MQTT connected ({reason_code}), listening on {TOPIC}/cmd", flush=True)
@@ -90,6 +91,8 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
 last_echo = time.time()     # last time our own status came back through the broker
 last_kick = 0.0
+kicks = 0                   # reconnects in a row without an echo, for the backoff
+restarting = threading.Event()
 
 
 def on_message(client, userdata, msg):
@@ -124,22 +127,38 @@ def mqtt_watchdog(now):
     """A Wi-Fi drop (e.g. switching access points down the hall) can leave the
     connection open but dead, with paho still queueing into it. Our own status
     echoing back through the broker proves the whole path works; if it stops,
-    start the connection over."""
-    global last_kick, last_echo
-    if now - last_echo < ECHO_TIMEOUT_S or now - last_kick < ECHO_TIMEOUT_S:
+    start the connection over, waiting longer each time (8, 16, 32 s) so a slow
+    reconnect gets to finish."""
+    global last_kick, kicks
+    if now - last_echo < ECHO_TIMEOUT_S:
+        kicks = 0
+        return
+    if restarting.is_set() or now - last_kick < ECHO_TIMEOUT_S * min(2 ** kicks, 4):
         return
     print(f"MQTT: no echo for {now - last_echo:.0f} s, reconnecting", flush=True)
-    last_kick = now
+    last_kick, kicks = now, kicks + 1
+    restarting.set()
+    threading.Thread(target=restart_mqtt, daemon=True).start()
+
+
+def restart_mqtt():
+    """In its own thread: loop_stop() waits for paho's network thread, which can
+    sit in a connect or DNS lookup for many seconds while Wi-Fi is gone. Done on
+    the main loop, that stopped sampling (1757 samples lost mid-walk, 2026-11-02)."""
     try:
         client.disconnect()
     except Exception:
         pass
-    client.loop_stop()
+    try:
+        client.loop_stop()
+    except Exception:
+        pass
     start_mqtt()
+    restarting.clear()
 
 
-def publish(sub, payload):
-    client.publish(f"{TOPIC}/{sub}", json.dumps(payload))
+def publish(sub, payload, qos=0):
+    client.publish(f"{TOPIC}/{sub}", json.dumps(payload), qos=qos)
 
 
 # ---- LED matrix -------------------------------------------------------------
@@ -259,7 +278,7 @@ class Session:
         self.state = "recording"
         self.t_record = time.time()
         self.drops_at_start = drops
-        publish("event", {"type": "recording", "session": self.name, "seconds": self.seconds})
+        publish("event", {"type": "recording", "session": self.name, "seconds": self.seconds}, qos=1)
         print(f"recording {self.name} ({self.seconds:g} s)", flush=True)
 
     def add(self, seq, v):
@@ -301,7 +320,7 @@ class Session:
     def finish(self, drops, aborted=False):
         stats = self.stats(drops)
         if self.file:
-            self.file.write(f"# end rows={self.rows} gaps={self.gaps} drops={stats['drops']}"
+            self.file.write(f"# end rows={self.rows} gaps={self.gaps} drops={stats['drops']} first_seq={self.first_seq}"
                             f"{' ABORTED' if aborted else ''}\n")
             self.file.close()
             self.file = None
@@ -313,7 +332,7 @@ class Session:
             if os.path.exists(self.path[:-4] + "_phone.csv"):
                 os.replace(self.path[:-4] + "_phone.csv", self.path[:-4] + "_phone_aborted.csv")
             stats["file"] = os.path.basename(self.path[:-4] + "_aborted.csv")
-        publish("event", {"type": "aborted" if aborted else "saved", **stats})
+        publish("event", {"type": "aborted" if aborted else "saved", **stats}, qos=1)
         print(("aborted " if aborted else "saved ") + json.dumps(stats), flush=True)
 
 
@@ -492,6 +511,7 @@ live_model = None
 
 # ---- Main loop --------------------------------------------------------------
 session = None
+recent_sessions = deque(maxlen=20)   # names already started, so a repeated record command is ignored
 imu_state = "?"
 drops = errors = 0
 live = []                      # samples waiting to go out on .../imu
@@ -524,16 +544,21 @@ def handle_command(cmd, now):
     global session
     kind = cmd.get("cmd")
     if kind == "record":
+        # record.py resends the command until it hears back, and QoS 1 can
+        # deliver it twice: a repeat of one already started is ignored.
+        if safe_name(cmd.get("session") or "") in recent_sessions:
+            return
         if session is not None:
-            publish("event", {"type": "error", "message": f"busy with {session.name}"})
+            publish("event", {"type": "error", "message": f"busy with {session.name}"}, qos=1)
             return
         session = Session(cmd)
+        recent_sessions.append(session.name)
         print(f"countdown for {session.name}", flush=True)
     elif kind == "stop" and session is not None:
         if session.state == "recording":
             session.finish(drops, aborted=True)
         else:
-            publish("event", {"type": "aborted", "session": session.name, "rows": 0})
+            publish("event", {"type": "aborted", "session": session.name, "rows": 0}, qos=1)
         session = None
     elif kind == "ping":
         publish_status(now)

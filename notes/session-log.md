@@ -697,3 +697,18 @@ real bugs plus a round of feature requests.
   - deploying to the board (it wasn't reachable: no adb, no answer at any host)
   - the phone page on a real iPhone
   - recordings, and a trained `steps_model.json`
+
+## Activity wearable: recording over patchy Wi-Fi — 2026-11-02
+
+- First real tap-mode run (Sam): sessions stuck on GO, a stop that never came back, sessions that didn't start, and "offline" mid-walk.
+- What the board logs showed:
+  - Two sessions were aborted at about 400 rows: `record.py` never got the "recording" event and sent stop after 4 s.
+  - Sessions the board saved never reached the laptop's log.
+  - One walk lost 1757 samples. The watchdog's `loop_stop()` ran on the main loop and waited on paho's stuck connect.
+- Fixes:
+  - `main.py`: reconnects run in a thread with backoff; QoS 1 for cmd and event; repeated record commands are ignored (the last 20 names are remembered); `first_seq` is written on the `# end` line.
+  - `record.py`: resends the command until the board's status shows it; takes the start from the status's `remaining` or the event; no auto-abort; an "unconfirmed" screen keeps the session and its taps, which are saved as seq when `first_seq` is unknown.
+  - `train_steps.py` reads seq-only tap files using the CSV's `first_seq`, and skips a session if it can't.
+  - The offline hint no longer mentions a phone hotspot (Sam isn't using one).
+- Tested: a fake-board harness (normal, lost first command, lost events), and the board simulation with a duplicate command and a `loop_stop()` that hangs 5 s (0 drops).
+- Deployed. The first Wi-Fi deploy left the sketch unresponsive (Bridge `imu_status` timeouts); a second deploy reflashed it and it's fine (100 Hz, IMU found).

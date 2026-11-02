@@ -208,6 +208,19 @@ The board times each session itself and saves it to `data/` in its app folder, s
 
 **Orientation-free phone inputs** (`python/steps.py`, `inputs()`): every pocket holds the phone differently, so gravity is estimated as its average acceleration over the surrounding second, and the net gets: *up* (acceleration along gravity − 1 g), *side* (size of the acceleration across it), *turn* (rotation about the vertical), *swing* (size of the rotation about horizontal axes: the thigh swinging), and *phone-on*. Plus the shin's 6 axes and |a|: 12 channels.
 
+**Patchy Wi-Fi** (fixed 2026-11-02 after the first real run lost sessions): the board's Wi-Fi drops now and then when it's worn (a body blocks 2.4 GHz well, and it has to roam between access points down a hall).
+- **What went wrong:**
+  - The record command or the board's replies were sometimes lost, so `record.py` sat on GO and aborted after 4 s (two sessions cut off at about 400 rows), or never logged a session the board did save.
+  - Last week's reconnect code called paho's `loop_stop()` on the main loop. With no Wi-Fi, that waited for a stuck connect, and the board stopped reading the IMU (1757 samples lost mid-walk).
+- **Fixes:**
+  - Commands and events are sent with QoS 1.
+  - The board ignores a repeated record command.
+  - Reconnects run in their own thread, with backoff (8, 16, 32 s).
+  - `record.py` resends the command until the board's status shows it, and takes the start time from the status or the event. It never aborts on its own. If the "saved" message never comes, it offers to keep the session: the board's copy comes over with `pull_data.py`.
+  - The taps are saved with the board's seq numbers, and the board's CSV `# end` line now carries `first_seq` to line them up.
+- **Tested** against a scripted fake board (normal, first command lost, events lost) and in the board simulation (duplicate command, and a reconnect whose `loop_stop()` hangs for 5 s: 0 drops).
+- **Also seen once:** after a Wi-Fi deploy, the sketch stopped answering (`Bridge error: Request 'imu_status' timed out`) until a second deploy reflashed it. If `record.py` shows the IMU missing or 0 Hz, deploy again, and check the GY-521 jumpers.
+
 **Ground truth: tap mode** (`record.py`). While a session records, the observer presses **f** at every left footstrike and **j** at every right one (space if unsure). Each tap is put on the board's clock the same way as the phone (from the arrival times of the board's live samples) and saved as `data/<session>_taps.csv` (`t_s,foot`, the same `t_s` as the session CSV). The board's `saved` event now carries `first_seq` so the two line up exactly.
 
 **Step protocol** (`common.STEP_PROTOCOL`, the default; `--protocol activity` gives week 1's): fit (wearable + phone), orientation, phone check, then 10 timed sessions, all tapped, about 5 min of recording:

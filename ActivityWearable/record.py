@@ -67,7 +67,7 @@ class Board:
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         self.connected = True
         client.subscribe(TOPIC + "/status")
-        client.subscribe(TOPIC + "/event")
+        client.subscribe(TOPIC + "/event", qos=1)
         client.subscribe(TOPIC + "/imu")
         client.subscribe(TOPIC + "/phone")
 
@@ -111,7 +111,7 @@ class Board:
         return (t - min(d for _, d in self.clock)) * RATE_HZ
 
     def send(self, payload):
-        self.client.publish(TOPIC + "/cmd", json.dumps(payload))
+        self.client.publish(TOPIC + "/cmd", json.dumps(payload), qos=1)
 
     def drain_events(self):
         out = []
@@ -258,23 +258,27 @@ def tap_checks(step, taps, seconds):
                  f": expected {lo}-{hi} a second for {step.label}. Missed some?"))]
 
 
-def save_taps(board, name, taps, first_seq):
-    """data/<session>_taps.csv: each tap's time on the board's clock, seconds
-    from the session's first sample (the same t_s as the session's CSV)."""
-    if first_seq is None:
-        return 0
+def save_taps(board, name, taps, first_seq, seconds):
+    """data/<session>_taps.csv: each tap's sample number on the board's clock
+    (seq), and its time from the session's first sample (t_s, the same as the
+    session's CSV). If the board's "saved" message never arrived, first_seq is
+    unknown and t_s is left blank: train_steps.py then takes first_seq from the
+    session CSV's "# end" line. Returns how many taps were placed."""
     rows = []
     for t, foot in taps:
         seq = board.seq_at(t)
-        if seq is not None:
-            rows.append((round((seq - first_seq) / RATE_HZ, 3), foot))
+        if seq is None:
+            continue
+        t_s = (seq - first_seq) / RATE_HZ if first_seq is not None else None
+        if t_s is None or 0 <= t_s < seconds:
+            rows.append((t_s, seq, foot))
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with open(DATA_DIR / f"{name}_taps.csv", "w") as f:
         f.write(f"# taps from record.py: f = left foot, j = right foot, space = either; "
                 f"{len(board.clock)} live messages set the clock\n")
-        f.write("t_s,foot\n")
-        for t_s, foot in rows:
-            f.write(f"{t_s:.3f},{foot}\n")
+        f.write("t_s,seq,foot\n")
+        for t_s, seq, foot in rows:
+            f.write(f"{'' if t_s is None else f'{t_s:.3f}'},{seq:.1f},{foot}\n")
     return len(rows)
 
 
@@ -364,8 +368,8 @@ class Recorder:
                     f"drops {st.get('drops', 0)}  sessions on board {st.get('sessions_on_board', 0)}")
         else:
             ago = f"{time.time() - b.status_at:.0f} s ago" if b.status_at else "never"
-            link = (f"{RED}○ wearable offline{RESET} (last heard {ago}). Is it on the power bank "
-                    f"and is your phone hotspot on?")
+            link = (f"{RED}○ wearable offline{RESET} (last heard {ago}). Is it on the power bank? "
+                    f"Its Wi-Fi drops now and then; it keeps recording on its own.")
         step = self.protocol[i]
         return [f"{BOLD}Activity wearable · {self.args.person} · {self.args.leg} leg · "
                 f"step {i + 1}/{len(self.protocol)}{RESET}", link, "─" * 78,
@@ -422,38 +426,57 @@ class Recorder:
     def record(self, i):
         step, b = self.protocol[i], self.board
         name = f"{self.args.person}_{step.key}_{datetime.now():%Y%m%d-%H%M%S}"
+        cmd = {"cmd": "record", "session": name, "person": self.args.person, "leg": self.args.leg,
+               "activity": step.key, "label": step.label, "seconds": step.seconds,
+               "countdown": COUNTDOWN_S, "laptop_time": datetime.now().isoformat(timespec="seconds")}
         b.drain_events()
         b.capture = None
-        b.send({"cmd": "record", "session": name, "person": self.args.person, "leg": self.args.leg,
-                "activity": step.key, "label": step.label, "seconds": step.seconds,
-                "countdown": COUNTDOWN_S, "laptop_time": datetime.now().isoformat(timespec="seconds")})
+        b.send(cmd)
 
-        # Countdown: the board runs its own; this mirrors it.
-        t0, t_rec = time.time(), None
-        while t_rec is None:
+        # The board runs the countdown and the recording itself from the moment
+        # the command reaches it. Over patchy Wi-Fi the command or the board's
+        # answers can be late or lost, so: resend the command until the board's
+        # status shows it (the board ignores repeats), take the start time from
+        # its status or its "recording" event, whichever comes, and never give up
+        # on a session just because the board has gone quiet.
+        t0 = last_send = time.time()
+        self.heard, self.t_rec = False, None
+        stats = None
+        while time.time() - t0 < COUNTDOWN_S + 1.5 and self.t_rec is None:
             left = COUNTDOWN_S - (time.time() - t0)
             n = max(1, int(left) + 1)
             render(self.header(i) + [f"  Get into position: {step.how[0]}", ""] +
-                   big(str(n) if left > 0 else "GO", YELLOW) + ["", f"{DIM}x abort{RESET}"])
-            for ev in b.drain_events():
-                if ev.get("type") == "recording" and ev.get("session") == name:
-                    t_rec = time.time()
-                elif ev.get("type") == "error":
-                    return self.problem(i, f"The board refused: {ev.get('message')}")
+                   big(str(n) if left > 0 else "GO", YELLOW) +
+                   ["", f"  {DIM}board has the command{RESET}" if self.heard else
+                    f"  {YELLOW}waiting for the board to confirm…{RESET}", f"{DIM}x abort{RESET}"])
+            stats = self.listen(name, step) or stats
+            if isinstance(stats, str):
+                return self.problem(i, stats)
+            if not self.heard and time.time() - last_send >= 1.5:
+                b.send(cmd)
+                last_send = time.time()
             if self.keys.get(0.05) == "x":
                 b.send({"cmd": "stop"})
                 return "redo"
-            if left < -4:
-                b.send({"cmd": "stop"})
-                return self.problem(i, "The board never started recording. Is it still online?")
 
-        stats, taps = None, []
+        start_guess = self.t_rec or t0 + COUNTDOWN_S
+        taps = []
         while stats is None:
-            elapsed = time.time() - t_rec
+            now = time.time()
+            start = self.t_rec or start_guess
+            elapsed = now - start
             left = step.seconds - elapsed
+            if not self.heard and b.online() and 3 < now - start_guess < 8:
+                if b.status.get("state") == "idle":
+                    return self.problem(i, "The board is online but never got the record command. Try again.")
+                if now - last_send >= 1.5:
+                    b.send(cmd)
+                    last_send = now
             m = motion(b)
             live = (f"  peak |a| {m[0]:5.2f} g {bar(m[0] / 8, 25, YELLOW)}   gyro {m[1]:6.0f} °/s"
-                    if m else f"  {YELLOW}no live data (Wi-Fi?), the board is still recording{RESET}")
+                    if m else f"  {YELLOW}no live data (Wi-Fi?), the board keeps recording on its own{RESET}")
+            if not self.heard and not self.t_rec:
+                live += f"\n  {YELLOW}no word from the board yet (Wi-Fi?): keep going, it records on its own{RESET}"
             current = [text for t, text in step.cues if t <= elapsed]
             tap_line = []
             if step.taps:
@@ -466,28 +489,28 @@ class Recorder:
                     f"{bar(elapsed / step.seconds)}",
                 f"  {step.how[0]}" if not current else f"  {BOLD}{YELLOW}{current[-1]}{RESET}",
                 "", live] + tap_line + ["", f"{DIM}x abort{RESET}"])
-            for ev in b.drain_events():
-                if ev.get("session") == name and ev.get("type") in ("saved", "aborted"):
-                    stats = ev
+            stats = self.listen(name, step)
+            if isinstance(stats, str):
+                return self.problem(i, stats)
             key = self.keys.get(0.1)
             while key in TAP_KEYS:                  # read every queued tap now, so each keeps its own time
-                if step.taps and 0 <= time.time() - t_rec <= step.seconds:
+                start = self.t_rec or start_guess
+                if step.taps and -1 <= time.time() - start <= step.seconds + 1:
                     taps.append((time.time(), TAP_KEYS[key]))
                 key = self.keys.get(0)
             if key == "x":
                 b.send({"cmd": "stop"})
-            if left < -8 and stats is None:
-                return self.problem(i, "The recording should have finished but the board didn't "
-                                       "confirm it. Its own copy is probably fine; check pull_data.py.")
+            if left < -10 and stats is None:
+                return self.unconfirmed(i, name, step, taps)
 
         save_live_copy(b, name, step.seconds)
         aborted = stats.get("type") == "aborted"
         checks = [] if aborted else quality(step, stats)
         if step.taps and not aborted:
-            saved = save_taps(b, name, taps, stats.get("first_seq"))
+            saved = save_taps(b, name, taps, stats.get("first_seq"), step.seconds)
             checks += tap_checks(step, taps, step.seconds)
             if saved < len(taps):
-                checks.append((False, "Couldn't place the taps on the board's clock (no live data?). Redo it."))
+                checks.append((False, f"Only {saved} of {len(taps)} taps could be placed on the board's clock. Redo it?"))
             if not stats.get("phone_rows"):
                 checks.append((False, "No phone data in this session. Is the phone page still running?"))
         while True:
@@ -500,16 +523,64 @@ class Recorder:
             key = self.keys.get(0.2)
             if key in ("enter", "r", "q"):
                 keep = key != "r" and not aborted
-                log_session({"session": name, "person": self.args.person, "leg": self.args.leg,
-                             "activity": step.key, "label": step.label, "seconds": step.seconds,
-                             "rows": stats.get("rows", 0), "gaps": stats.get("gaps", 0),
-                             "checks_ok": all(ok for ok, _ in checks),
-                             "status": "kept" if keep else "discarded",
-                             "laptop_time": datetime.now().isoformat(timespec="seconds")})
-                if keep:
-                    self.recorded.append(step.key)
+                self.log(name, step, stats.get("rows", 0), stats.get("gaps", 0),
+                         all(ok for ok, _ in checks), keep)
                 return "redo" if key == "r" or (aborted and key == "enter") else (
                     "quit" if key == "q" else "next")
+
+    def listen(self, name, step):
+        """Take in what the board has said about this session. Returns its
+        saved/aborted event, an error message (str), or None."""
+        b, out = self.board, None
+        st = b.status if b.online() else {}
+        if st.get("session") == name:
+            self.heard = True
+            if st.get("state") == "recording" and st.get("remaining") is not None:
+                # status arrives a little late, so the earliest estimate is the best one
+                t = b.status_at - (step.seconds - st["remaining"])
+                self.t_rec = min(self.t_rec or t, t)
+        for ev in b.drain_events():
+            if ev.get("type") == "error":
+                out = f"The board refused: {ev.get('message')}"
+            elif ev.get("session") == name:
+                self.heard = True
+                if ev.get("type") == "recording":
+                    self.t_rec = min(self.t_rec or time.time(), time.time())
+                elif ev.get("type") in ("saved", "aborted"):
+                    out = ev
+        return out
+
+    def unconfirmed(self, i, name, step, taps):
+        """The session should be over but the board's "saved" message never
+        came. The board records on its own, so its copy is very likely fine."""
+        b = self.board
+        save_live_copy(b, name, step.seconds)
+        saved = save_taps(b, name, taps, None, step.seconds) if step.taps else 0
+        while True:
+            late = self.listen(name, step)
+            if isinstance(late, dict) and late.get("type") == "saved":   # it came after all
+                if step.taps:
+                    save_taps(b, name, taps, late.get("first_seq"), step.seconds)
+                self.log(name, step, late.get("rows", 0), late.get("gaps", 0), True, True)
+                return "next"
+            render(self.header(i) + [
+                f"  {YELLOW}The board didn't confirm this session (Wi-Fi?).{RESET}",
+                "  It records on its own, so its copy is very likely fine: pull_data.py fetches it later.",
+                f"  {len(taps)} taps ({saved} placed on the board's clock) are saved either way." if step.taps else "",
+                "", f"{BOLD}Enter{RESET} keep it and go on   {BOLD}r{RESET} redo   {DIM}q quit{RESET}"])
+            key = self.keys.get(0.2)
+            if key in ("enter", "r", "q"):
+                self.log(name, step, "", "", False, key != "r")
+                return "redo" if key == "r" else ("quit" if key == "q" else "next")
+
+    def log(self, name, step, rows, gaps, checks_ok, keep):
+        log_session({"session": name, "person": self.args.person, "leg": self.args.leg,
+                     "activity": step.key, "label": step.label, "seconds": step.seconds,
+                     "rows": rows, "gaps": gaps, "checks_ok": checks_ok,
+                     "status": "kept" if keep else "discarded",
+                     "laptop_time": datetime.now().isoformat(timespec="seconds")})
+        if keep:
+            self.recorded.append(step.key)
 
     def problem(self, i, message):
         while True:

@@ -106,7 +106,9 @@ def load(data_dir):
             continue
         taps_path = data_dir / f"{r['session']}_taps.csv"
         if taps_path.exists():
-            taps = np.array([float(t) for t, _ in read_csv(taps_path, ["t_s", "foot"])]) * S.RATE_HZ
+            taps = load_taps(taps_path, path)
+            if taps is None:
+                continue
         elif r["label"] in ("still", "bike"):
             taps = np.zeros(0)               # zero-step session from before tap mode
         else:
@@ -123,6 +125,27 @@ def load(data_dir):
             "y": bumps(taps, len(X)),
         })
     return sessions
+
+
+def load_taps(taps_path, session_path):
+    """Tap times in samples from the session's start. A tap file written when
+    the board's "saved" message never arrived has seq but no t_s; the start
+    (first_seq) is then on the session CSV's "# end" line."""
+    with open(taps_path) as f:
+        rows = [line.strip().split(",") for line in f if line.strip() and not line.startswith("#")]
+    head, body = rows[0], rows[1:]
+    t_s = [r[head.index("t_s")] for r in body]
+    if all(t_s):
+        return np.array([float(t) for t in t_s]) * S.RATE_HZ
+    first = None
+    for line in open(session_path):
+        if line.startswith("# end") and "first_seq=" in line:
+            first = int(line.split("first_seq=")[1].split()[0])
+    if first is None:
+        print("  no first_seq for", taps_path.name, "(skipped)")
+        return None
+    seqs = np.array([float(r[head.index("seq")]) for r in body]) - first
+    return seqs[(seqs >= 0) & (seqs < sum(1 for line in open(session_path) if line[:1].isdigit()))]
 
 
 def bumps(taps, n):

@@ -7,7 +7,9 @@
 <!--
   Live demo display for the activity wearable. Open this file in a browser
   (open ActivityWearable/dashboard.html); it connects to the same MQTT broker
-  as the board over WebSockets and shows Model 1 and Model 2 side by side.
+  as the board over WebSockets and shows Model 1 and Model 2 side by side,
+  plus the neural net's step count (How far). Also served at
+  https://sl-ter.github.io/me193/ActivityWearable/dashboard.html
   Add ?demo to the URL to see it with made-up data (no board needed).
 -->
 <style>
@@ -331,7 +333,7 @@ function showLive(m) {
   $("swing").innerHTML = `${Math.round(m.gyro_x_std)}<small> °/s</small>`;
   const moving = m.gyro_x_std > 45 && m.cadence_share > 0.15;
   if (m.m2 === "bike") { $("rate-k").textContent = "Pedalling"; $("rate").innerHTML = moving ? `${Math.round(m.cadence_hz * 60)}<small> rpm</small>` : "–"; }
-  else { $("rate-k").textContent = "Steps"; $("rate").innerHTML = moving ? `${Math.round(m.cadence_hz * 120)}<small> /min</small>` : "–"; }
+  else { $("rate-k").textContent = "Steps"; $("rate").innerHTML = m.step_rate_spm != null ? `${m.step_rate_spm}<small> /min</small>` : "–"; }
 
   // Verdict
   const v = $("verdict");
@@ -373,7 +375,9 @@ function tick() {
   const online = now - lastStatus < 3000 && now - lastLive < 3000;
   document.body.classList.toggle("offline", !online);
   $("conn-dot").className = "dot " + (online ? "on" : (client && client.connected ? "" : "off"));
-  $("conn-text").textContent = online ? `live · ${Math.round(status.rate_hz || 0)} Hz` + (status.state === "recording" ? " · recording" : "")
+  const ph = status.phone || {};
+  $("conn-text").textContent = online ? `live · ${Math.round(status.rate_hz || 0)} Hz` + (ph.on ? ` · phone ${Math.round(ph.rate_hz)} Hz` : " · no phone")
+    + (status.state === "recording" ? " · recording" : "")
     : (client && client.connected ? "broker ok · wearable offline" : "connecting to broker…");
   drawTrace();
   requestAnimationFrame(tick);
@@ -409,21 +413,23 @@ function drawTrace() {
 }
 
 // ---- How far -------------------------------------------------------------
-// Distance = strides counted by the board x stride length. A stride is two
-// steps (the sensor is on one leg). Stride length isn't measured; without a
-// calibration it comes from rules of thumb, shown as a range.
-const STRIDE_PER_HEIGHT = { walk: [0.74, 0.90], run: [1.0, 1.6] };   // stride length / height (rough)
+// Distance = steps counted by the board's neural net x step length. Step
+// length isn't measured; without a calibration it comes from rules of thumb,
+// shown as a range.
+const STEP_PER_HEIGHT = { walk: [0.37, 0.45], run: [0.5, 0.8] };     // step length / height (rough)
 const DEFAULT_HEIGHT_M = [1.55, 1.95];                                // if no height is entered
-const COUNT_ERR = 0.05;        // stride counting was ~3% off (median) on our recordings; allow 5%
-const CAL_SPREAD = 0.08;       // a calibrated stride still varies with pace
+const DEFAULT_COUNT_ERR = 0.1; // until the board reports the net's held-out error
+const CAL_SPREAD = 0.08;       // a calibrated step still varies with pace
 const store = {
   get(k) { try { return JSON.parse(localStorage.getItem("wear." + k)); } catch { return null; } },
   set(k, v) { try { localStorage.setItem("wear." + k, JSON.stringify(v)); } catch {} },
 };
 let heightM = store.get("height_m");
-const calStride = store.get("cal_stride") || {};    // {walk: m, run: m}
-let cal = null;                                      // {gait, metres, strides0} while calibrating
+const calStep = store.get("cal_step") || {};        // {walk: m, run: m}
+let cal = null;                                      // {gait, metres, steps0} while calibrating
 let latestLive = null;
+const countErr = () => (latestLive && latestLive.step_net && latestLive.step_net.count_err_pct != null)
+  ? Math.max(0.02, latestLive.step_net.count_err_pct / 100) : DEFAULT_COUNT_ERR;
 
 function parseHeight(text) {
   const t = text.trim().toLowerCase();
@@ -440,27 +446,28 @@ function fmtDist(m) { return m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.ro
 function fmtRange(lo, hi) { return hi < 1000 ? `${Math.round(lo)}–${Math.round(hi)} m` : `${fmtDist(lo)}–${fmtDist(hi)}`; }
 function fmtDur(s) { s = Math.round(s); return s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`; }
 
-function strideRange(gait) {
-  if (calStride[gait]) return [calStride[gait] * (1 - CAL_SPREAD), calStride[gait] * (1 + CAL_SPREAD)];
-  const [kLo, kHi] = STRIDE_PER_HEIGHT[gait];
+function stepRange(gait) {
+  if (calStep[gait]) return [calStep[gait] * (1 - CAL_SPREAD), calStep[gait] * (1 + CAL_SPREAD)];
+  const [kLo, kHi] = STEP_PER_HEIGHT[gait];
   const [hLo, hHi] = heightM ? [heightM, heightM] : DEFAULT_HEIGHT_M;
   return [kLo * hLo, kHi * hHi];
 }
-function distRange(gait, strides) {
-  const [lo, hi] = strideRange(gait);
-  return [strides * lo * (1 - COUNT_ERR), strides * hi * (1 + COUNT_ERR)];
+function distRange(gait, steps) {
+  const [lo, hi] = stepRange(gait), e = countErr();
+  return [steps * lo * (1 - e), steps * hi * (1 + e)];
 }
 function boutText(b) {
+  if (b.steps == null) return { big: fmtDur(b.duration_s), range: "no step net on the board yet", sub: "", short: "" };
   if (b.label === "walk" || b.label === "run") {
-    const [lo, hi] = distRange(b.label, b.strides);
+    const [lo, hi] = distRange(b.label, b.steps);
     return { big: "≈ " + fmtDist((lo + hi) / 2), range: `likely ${fmtRange(lo, hi)}`,
-             sub: `${b.strides} strides (${b.strides * 2} steps) in ${fmtDur(b.duration_s)}`, short: fmtRange(lo, hi) };
+             sub: `${b.steps} steps in ${fmtDur(b.duration_s)}`, short: fmtRange(lo, hi) };
   }
   if (b.label === "bike") {
-    return { big: `${b.strides} pedal turn${b.strides === 1 ? "" : "s"}`, range: "air-biking goes nowhere, so no distance",
-             sub: `in ${fmtDur(b.duration_s)}`, short: `${b.strides} turns` };
+    return { big: fmtDur(b.duration_s), range: "air-biking goes nowhere, so no distance",
+             sub: b.steps ? `${b.steps} steps counted (should be 0)` : "0 steps, as it should be", short: "0 m" };
   }
-  return { big: fmtDur(b.duration_s), range: "not moving", sub: "", short: "0 m" };
+  return { big: fmtDur(b.duration_s), range: "not moving", sub: b.steps ? `${b.steps} steps (shuffling?)` : "", short: "0 m" };
 }
 function showFar(m) {
   latestLive = m;
@@ -472,25 +479,28 @@ function showFar(m) {
   $("far-label").textContent = { still: "standing still", walk: "walking", run: "running", bike: "air-biking" }[b.label];
   $("far-big").textContent = t.big;
   $("far-range").textContent = t.range;
-  $("far-sub").textContent = t.sub;
+  $("far-sub").textContent = t.sub + (m.steps_total != null ? ` · ${m.steps_total} steps since the board started` : "");
   $("bouts").innerHTML = (m.recent_bouts || []).slice(0, 5).map(r => {
     const x = boutText(r);
-    return `<tr><td><i style="background:var(--${r.label})"></i>${r.label}</td><td>${fmtDur(r.duration_s)}</td><td>${r.label === "walk" || r.label === "run" ? r.strides * 2 + " steps" : ""}</td><td>${x.short}</td></tr>`;
+    return `<tr><td><i style="background:var(--${r.label})"></i>${r.label}</td><td>${fmtDur(r.duration_s)}</td><td>${r.steps != null ? r.steps + " steps" : ""}</td><td>${x.short}</td></tr>`;
   }).join("");
-  if (cal) $("cal-msg").textContent = `${m.strides_total - cal.strides0} strides so far…`;
+  if (cal) $("cal-msg").textContent = `${m.steps_total - cal.steps0} steps so far…`;
   updateNote();
 }
 function updateNote() {
   const parts = ["walk", "run"].map(g => {
-    const [lo, hi] = strideRange(g);
-    return `${g} stride ${lo.toFixed(2)}–${hi.toFixed(2)} m` + (calStride[g] ? " (calibrated)" : "");
+    const [lo, hi] = stepRange(g);
+    return `${g} step ${lo.toFixed(2)}–${hi.toFixed(2)} m` + (calStep[g] ? " (calibrated)" : "");
   });
+  const net = latestLive && latestLive.step_net;
   $("far-note").innerHTML =
-    `Distance = strides × stride length. Strides (one forward swing of the shin = two steps) are counted to about 3%. ` +
-    `Stride length isn't measured, so it's a range: ${parts.join(", ")}` +
+    `Distance = steps × step length. Steps are counted by a neural net (trained in PyTorch) from the shin sensor and the phone in the left pocket` +
+    (net && net.count_err_pct != null ? `: ${net.count_err_pct}% off (median) on people it never saw` +
+      (net.count_err_pct_shin_only != null ? `, ${net.count_err_pct_shin_only}% without the phone` : "") : "") + `. ` +
+    `Step length isn't measured, so it's a range: ${parts.join(", ")}` +
     (heightM ? "" : ` (height unknown, so 155–195 cm assumed)`) +
-    `. ${calStride.walk && calStride.run ? "" : "Uncalibrated it uses rough rules of thumb (0.74–0.90 × height walking, 1.0–1.6 × running); calibrating on a measured distance narrows it to about ±10%. "}` +
-    `The activity is recognised about 1.5 s late, so a stretch's first stride or two can land in the one before.`;
+    `. ${calStep.walk && calStep.run ? "" : "Uncalibrated it uses rough rules of thumb (0.37–0.45 × height walking, 0.5–0.8 × running); calibrating on a measured distance narrows it to about ±10%. "}` +
+    `Steps are counted about 1.3 s late and the activity about 1.5 s late, so a stretch's first step or two can land in the one before.`;
 }
 $("height").value = heightM ? fmtHeight(heightM).split(" ")[0] : "";
 $("height-ok").textContent = heightM ? "✓ " + fmtHeight(heightM) : "";
@@ -506,16 +516,17 @@ $("cal-btn").addEventListener("click", () => {
     const metres = parseFloat($("cal-m").value);
     if (!(metres > 0)) { $("cal-msg").textContent = "enter the measured distance first"; return; }
     if (!latestLive) { $("cal-msg").textContent = "waiting for the wearable"; return; }
-    cal = { gait: $("cal-gait").value, metres, strides0: latestLive.strides_total };
+    if (latestLive.steps_total == null) { $("cal-msg").textContent = "the board has no step net yet"; return; }
+    cal = { gait: $("cal-gait").value, metres, steps0: latestLive.steps_total };
     $("cal-btn").textContent = "Stop";
     $("cal-msg").textContent = `go: ${cal.gait} the ${metres} m, then press Stop`;
   } else {
-    const n = latestLive.strides_total - cal.strides0;
-    if (n < 4) { $("cal-msg").textContent = `only ${n} strides counted; try a longer distance`; }
+    const n = latestLive.steps_total - cal.steps0;
+    if (n < 8) { $("cal-msg").textContent = `only ${n} steps counted; try a longer distance`; }
     else {
-      calStride[cal.gait] = cal.metres / n;
-      store.set("cal_stride", calStride);
-      $("cal-msg").textContent = `${cal.gait} stride = ${(cal.metres / n).toFixed(2)} m (${n} strides over ${cal.metres} m)`;
+      calStep[cal.gait] = cal.metres / n;
+      store.set("cal_step", calStep);
+      $("cal-msg").textContent = `${cal.gait} step = ${(cal.metres / n).toFixed(2)} m (${n} steps over ${cal.metres} m)`;
     }
     cal = null; $("cal-btn").textContent = "Start";
     if (latestLive) showFar(latestLive);
@@ -545,17 +556,21 @@ if (!DEMO && window.mqtt) {
     const peak = { still: 1.02, walk: 2.6, run: 6.1, bike: 1.05 }[act] + Math.random() * 0.3;
     const m1 = peak < cuts[0] ? "still" : peak < cuts[1] ? "bike" : peak < cuts[2] ? "walk" : "run";
     const proba = Object.fromEntries(CLASSES.map(c => [c, c === act ? 0.9 : 0.1 / 3]));
-    showStatus({ rate_hz: 100, state: "idle", model2_kind: "forest", model2_kinds: ["tree", "forest", "knn"] });
-    const into = t % 6, strides = Math.floor(into * { still: 0, walk: 0.9, run: 1.4, bike: 1.1 }[act]);
+    showStatus({ rate_hz: 100, state: "idle", model2_kind: "forest", model2_kinds: ["tree", "forest", "knn"],
+                 phone: { on: true, rate_hz: 60 } });
+    const rate = { still: 0, walk: 1.8, run: 2.8, bike: 0 }[act];
+    const into = t % 6, steps = Math.floor(into * rate);
     if (act !== demoBout.label) {
       if (demoBout.label) demoRecent.unshift({ ...demoBout });
-      demoBout = { id: demoRecent.length, label: act, start: t, duration_s: 0, strides: 0 };
+      demoBout = { id: demoRecent.length, label: act, start: t, duration_s: 0, steps: 0 };
     }
-    demoBout.duration_s = into; demoBout.strides = strides; demoTotal += strides - (demoBout._s || 0); demoBout._s = strides;
+    demoBout.duration_s = into; demoBout.steps = steps; demoTotal += steps - (demoBout._s || 0); demoBout._s = steps;
     const live = { m1, m1_peak: peak, m1_thresholds: cuts, m1_direction: "+y", m2: act, m2_kind: "forest", m2_proba: proba,
                acc_y_mean: act === "bike" ? 0.2 : 0.98, gyro_x_std: act === "still" ? 1 : 140,
                cadence_hz: { still: 0, walk: 0.9, run: 1.4, bike: 1.1 }[act], cadence_share: act === "still" ? 0 : 0.4,
-               strides_total: demoTotal, bout: demoBout, recent_bouts: demoRecent.slice(0, 6) };
+               steps_total: demoTotal, step_rate_spm: Math.round(rate * 60),
+               step_net: { count_err_pct: 4, count_err_pct_shin_only: 7 },
+               bout: demoBout, recent_bouts: demoRecent.slice(0, 6) };
     showLive(live); showFar(live);
     const rows = [];
     for (let i = 0; i < 50; i++, seq++) {

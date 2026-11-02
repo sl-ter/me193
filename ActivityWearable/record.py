@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """Guided recording session for the activity wearable (laptop side).
 
-Walks one person through the recording protocol (common.PROTOCOL): fit check,
-orientation check, then each timed activity. For each step it shows what to
-do, starts the recording on the board, counts down, shows the time left,
-live motion and on-screen cues (no sound), and sanity-checks the result.
+Walks one person through a recording protocol: fit check, orientation check,
+then each timed activity. For each step it shows what to do, starts the
+recording on the board, counts down, shows the time left, live motion and
+on-screen cues (no sound), and sanity-checks the result.
 
-    python ActivityWearable/record.py --person SL
-    python ActivityWearable/record.py --person SL --start 6    # resume at step 6
+    python ActivityWearable/record.py --person SL                 # step-counting protocol (week 2)
+    python ActivityWearable/record.py --person SL --start 6       # resume at step 6
+    python ActivityWearable/record.py --person SL --protocol activity   # week 1's protocol
 
 Keys: Enter = start / next, r = redo, s = skip, b = back, x = abort a recording,
 q = quit. The board keeps its own copy of every session (pull_data.py copies
 them over); this script also saves what it received over MQTT in data/live/
 and logs every session in data/session_log.csv (redone ones as "discarded").
+
+Tap mode (step sessions): while it records, whoever holds the laptop presses
+f at every left footstrike and j at every right one (space if unsure). The
+taps are the step counter's ground truth: they go in data/<session>_taps.csv,
+on the board's sample clock (see Board.seq_at).
 """
 import argparse
 import csv
@@ -29,9 +35,11 @@ from datetime import datetime
 
 import paho.mqtt.client as mqtt
 
-from common import BROKER, LIVE_DIR, PORT, PROTOCOL, RATE_HZ, SESSION_LOG, TOPIC
+from common import BROKER, DATA_DIR, LIVE_DIR, PHONE_URL, PORT, PROTOCOLS, RATE_HZ, SESSION_LOG, TOPIC
 
 COUNTDOWN_S = 5
+TAP_KEYS = {"f": "left", "j": "right", " ": "either"}
+CLOCK_WINDOW_S = 30.0    # the board's clock offset is re-estimated over the last 30 s of live messages
 
 BOLD, DIM, RESET = "\x1b[1m", "\x1b[2m", "\x1b[0m"
 GREEN, RED, YELLOW, CYAN = "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[36m"
@@ -46,6 +54,8 @@ class Board:
         self.events = queue.Queue()
         self.samples = deque(maxlen=RATE_HZ * 5)   # (seq, ax, ay, az, gx, gy, gz)
         self.capture = None                        # list while a session is recording
+        self.phone_capture = None                  # the phone's raw rows while recording (a backup)
+        self.clock = deque()                       # (arrival, arrival - newest seq's time) per live message
         self.connected = False
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"wear-laptop-{os.getpid()}")
         self.client.on_connect = self._on_connect
@@ -59,6 +69,7 @@ class Board:
         client.subscribe(TOPIC + "/status")
         client.subscribe(TOPIC + "/event")
         client.subscribe(TOPIC + "/imu")
+        client.subscribe(TOPIC + "/phone")
 
     def _on_message(self, client, userdata, msg):
         try:
@@ -71,15 +82,33 @@ class Board:
         elif kind == "event":
             if data.get("type") == "recording":
                 self.capture = []
+                self.phone_capture = []
             self.events.put(data)
         elif kind == "imu":
-            for s in data.get("s", []):
+            rows = data.get("s", [])
+            for s in rows:
                 self.samples.append(s)
                 if self.capture is not None:
                     self.capture.append(s)
+            if rows:
+                now = time.time()
+                self.clock.append((now, now - rows[-1][0] / RATE_HZ))
+                while self.clock and now - self.clock[0][0] > CLOCK_WINDOW_S:
+                    self.clock.popleft()
+        elif kind == "phone" and self.phone_capture is not None:
+            self.phone_capture.extend(data.get("s", []))
 
     def online(self):
         return time.time() - self.status_at < 3
+
+    def seq_at(self, t):
+        """The board's seq at laptop time t. Each live message arrives a little
+        after its newest sample, so (arrival - that sample's time) is smallest
+        for the quickest message: that minimum is the clock offset, give or
+        take the quickest delivery (tens of ms)."""
+        if not self.clock:
+            return None
+        return (t - min(d for _, d in self.clock)) * RATE_HZ
 
     def send(self, payload):
         self.client.publish(TOPIC + "/cmd", json.dumps(payload))
@@ -132,11 +161,13 @@ FONT = {   # 5x7, for the big countdown and labels
     "9": ["01110", "10001", "10001", "01111", "00001", "00010", "01100"],
     "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
     "B": ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+    "D": ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
     "E": ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
     "G": ["01111", "10000", "10000", "10011", "10001", "10001", "01111"],
     "I": ["11111", "00100", "00100", "00100", "00100", "00100", "11111"],
     "K": ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
     "L": ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
+    "M": ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
     "N": ["10001", "11001", "10101", "10101", "10011", "10001", "10001"],
     "O": ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
     "P": ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
@@ -145,6 +176,7 @@ FONT = {   # 5x7, for the big countdown and labels
     "T": ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
     "U": ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
     "W": ["10001", "10001", "10001", "10101", "10101", "10101", "01010"],
+    "X": ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
     " ": ["00000"] * 7,
 }
 
@@ -210,6 +242,42 @@ def orientation(board):
     return (ax, ay, az), checks
 
 
+def tap_checks(step, taps, seconds):
+    """Rough checks on the observer's taps."""
+    n = len(taps)
+    if step.target:
+        ok = n == step.target
+        return [(ok, f"{n} taps, walker counted {step.target}" + ("." if ok else
+                     ": missed or extra taps? Redo unless the walker miscounted."))]
+    if step.label in ("still", "bike"):
+        return [(n == 0, "No taps, as it should be." if n == 0 else f"{n} taps in a zero-step session?")]
+    rate = n / seconds if seconds else 0
+    lo, hi = {"walk": (1.2, 2.6), "run": (2.0, 3.8)}.get(step.label, (0, 9))
+    ok = lo <= rate <= hi
+    return [(ok, f"{n} taps, {rate:.1f} a second" + ("." if ok else
+                 f": expected {lo}-{hi} a second for {step.label}. Missed some?"))]
+
+
+def save_taps(board, name, taps, first_seq):
+    """data/<session>_taps.csv: each tap's time on the board's clock, seconds
+    from the session's first sample (the same t_s as the session's CSV)."""
+    if first_seq is None:
+        return 0
+    rows = []
+    for t, foot in taps:
+        seq = board.seq_at(t)
+        if seq is not None:
+            rows.append((round((seq - first_seq) / RATE_HZ, 3), foot))
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(DATA_DIR / f"{name}_taps.csv", "w") as f:
+        f.write(f"# taps from record.py: f = left foot, j = right foot, space = either; "
+                f"{len(board.clock)} live messages set the clock\n")
+        f.write("t_s,foot\n")
+        for t_s, foot in rows:
+            f.write(f"{t_s:.3f},{foot}\n")
+    return len(rows)
+
+
 def quality(step, st):
     """Rough sanity checks on a saved session (not the model!)."""
     out = []
@@ -244,6 +312,13 @@ def quality(step, st):
 
 
 def save_live_copy(board, name, seconds):
+    phone = board.phone_capture or []
+    board.phone_capture = None
+    if phone:
+        LIVE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LIVE_DIR / f"{name}_phone.csv", "w") as f:
+            f.write("phone_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps\n")
+            f.writelines(",".join(str(x) for x in r) + "\n" for r in phone)
     rows = board.capture or []
     board.capture = None
     if not rows:
@@ -272,6 +347,7 @@ def log_session(row):
 class Recorder:
     def __init__(self, args, board, keys):
         self.args, self.board, self.keys = args, board, keys
+        self.protocol = PROTOCOLS[args.protocol]
         self.recorded = []
 
     def header(self, i):
@@ -280,22 +356,25 @@ class Recorder:
             link = f"{RED}○ no connection to the MQTT broker ({BROKER}){RESET}"
         elif b.online():
             imu_ok = st.get("imu") not in (None, "not found")
+            ph = st.get("phone") or {}
+            phone = (f"{GREEN}phone {ph.get('rate_hz', 0):.0f} Hz{RESET}" if ph.get("on") else
+                     f"{RED if self.args.protocol == 'steps' else DIM}no phone{RESET}")
             link = (f"{GREEN}● wearable online{RESET}  {st.get('rate_hz', 0):.0f} Hz  "
-                    f"IMU {st.get('imu') if imu_ok else RED + 'NOT FOUND' + RESET}  "
+                    f"IMU {st.get('imu') if imu_ok else RED + 'NOT FOUND' + RESET}  {phone}  "
                     f"drops {st.get('drops', 0)}  sessions on board {st.get('sessions_on_board', 0)}")
         else:
             ago = f"{time.time() - b.status_at:.0f} s ago" if b.status_at else "never"
             link = (f"{RED}○ wearable offline{RESET} (last heard {ago}). Is it on the power bank "
                     f"and is your phone hotspot on?")
-        step = PROTOCOL[i]
+        step = self.protocol[i]
         return [f"{BOLD}Activity wearable · {self.args.person} · {self.args.leg} leg · "
-                f"step {i + 1}/{len(PROTOCOL)}{RESET}", link, "─" * 78,
+                f"step {i + 1}/{len(self.protocol)}{RESET}", link, "─" * 78,
                 f"{BOLD}{CYAN}{step.title}{RESET}" +
                 (f"   {DIM}label '{step.label}', {step.seconds:g} s{RESET}" if step.label else ""), ""]
 
     def run(self):
         i = self.args.start - 1
-        while 0 <= i < len(PROTOCOL):
+        while 0 <= i < len(self.protocol):
             result = self.step(i)
             if result == "quit":
                 return
@@ -304,12 +383,19 @@ class Recorder:
         self.done()
 
     def step(self, i):
-        step = PROTOCOL[i]
+        step = self.protocol[i]
         while True:
             lines = self.header(i) + [f"  • {h}" for h in step.how] + [""]
             if step.key == "orient":
                 _, checks = orientation(self.board)
                 lines += [f"  {OK if ok else BAD} {text}" for ok, text in checks] + [""]
+            if step.key == "phone":
+                ph = self.board.status.get("phone") or {}
+                if ph.get("on"):
+                    lines += [f"  {OK} The board hears the phone: {ph.get('rate_hz', 0):.0f} Hz, "
+                              f"{ph.get('behind_ms', 0)} ms behind the shin.", ""]
+                else:
+                    lines += [f"  {BAD} The board doesn't hear the phone. Open {PHONE_URL}", ""]
             if step.label:
                 lines.append(f"{BOLD}Enter{RESET} start ({COUNTDOWN_S} s countdown)   "
                              f"{DIM}s skip · b back · q quit{RESET}")
@@ -334,7 +420,7 @@ class Recorder:
                         return result
 
     def record(self, i):
-        step, b = PROTOCOL[i], self.board
+        step, b = self.protocol[i], self.board
         name = f"{self.args.person}_{step.key}_{datetime.now():%Y%m%d-%H%M%S}"
         b.drain_events()
         b.capture = None
@@ -361,7 +447,7 @@ class Recorder:
                 b.send({"cmd": "stop"})
                 return self.problem(i, "The board never started recording. Is it still online?")
 
-        stats = None
+        stats, taps = None, []
         while stats is None:
             elapsed = time.time() - t_rec
             left = step.seconds - elapsed
@@ -369,15 +455,25 @@ class Recorder:
             live = (f"  peak |a| {m[0]:5.2f} g {bar(m[0] / 8, 25, YELLOW)}   gyro {m[1]:6.0f} °/s"
                     if m else f"  {YELLOW}no live data (Wi-Fi?), the board is still recording{RESET}")
             current = [text for t, text in step.cues if t <= elapsed]
+            tap_line = []
+            if step.taps:
+                last = f"   last: {taps[-1][1]}" if taps else ""
+                goal = f" / {step.target}" if step.target else ""
+                tap_line = ["", f"  {BOLD}TAPS {len(taps)}{goal}{RESET}{last}   "
+                                f"{DIM}f left foot · j right foot · space either{RESET}"]
             render(self.header(i) + big(step.label, GREEN) + [
                 "", f"  {BOLD}{YELLOW if left <= 10 else ''}{max(left, 0):4.0f} s left{RESET}  "
                     f"{bar(elapsed / step.seconds)}",
                 f"  {step.how[0]}" if not current else f"  {BOLD}{YELLOW}{current[-1]}{RESET}",
-                "", live, "", f"{DIM}x abort{RESET}"])
+                "", live] + tap_line + ["", f"{DIM}x abort{RESET}"])
             for ev in b.drain_events():
                 if ev.get("session") == name and ev.get("type") in ("saved", "aborted"):
                     stats = ev
             key = self.keys.get(0.1)
+            while key in TAP_KEYS:                  # read every queued tap now, so each keeps its own time
+                if step.taps and 0 <= time.time() - t_rec <= step.seconds:
+                    taps.append((time.time(), TAP_KEYS[key]))
+                key = self.keys.get(0)
             if key == "x":
                 b.send({"cmd": "stop"})
             if left < -8 and stats is None:
@@ -387,6 +483,13 @@ class Recorder:
         save_live_copy(b, name, step.seconds)
         aborted = stats.get("type") == "aborted"
         checks = [] if aborted else quality(step, stats)
+        if step.taps and not aborted:
+            saved = save_taps(b, name, taps, stats.get("first_seq"))
+            checks += tap_checks(step, taps, step.seconds)
+            if saved < len(taps):
+                checks.append((False, "Couldn't place the taps on the board's clock (no live data?). Redo it."))
+            if not stats.get("phone_rows"):
+                checks.append((False, "No phone data in this session. Is the phone page still running?"))
         while True:
             lines = self.header(i) + ([f"  {YELLOW}Aborted: not saved as a good session.{RESET}"] if aborted else
                                       [f"  Saved {stats.get('file')}", ""] +
@@ -419,7 +522,7 @@ class Recorder:
                 return "quit"
 
     def done(self):
-        todo = [s.key for s in PROTOCOL if s.label and s.key not in self.recorded]
+        todo = [s.key for s in self.protocol if s.label and s.key not in self.recorded]
         while True:
             render([f"{BOLD}Done with {self.args.person}.{RESET}", "",
                     f"  Kept this run: {', '.join(self.recorded) or 'nothing'}",
@@ -436,7 +539,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--person", required=True, help="initials or an ID, never a full name (e.g. SL)")
     p.add_argument("--leg", default="right")
-    p.add_argument("--start", type=int, default=1, help=f"step to start at, 1-{len(PROTOCOL)}")
+    p.add_argument("--protocol", choices=list(PROTOCOLS), default="steps",
+                   help="steps = week 2's tap-mode step sessions (default); activity = week 1's")
+    p.add_argument("--start", type=int, default=1, help="step to start at, from 1")
     args = p.parse_args()
     args.person = "".join(c for c in args.person if c.isalnum()).upper() or "X"
     if not sys.stdin.isatty():

@@ -660,3 +660,40 @@ real bugs plus a round of feature requests.
 - The handout's centered-intercept fix `mean(x) + b` should be `b − m·mean(x)`; the README notes this.
 - Bug fixed along the way: renaming openpyxl sheets *after* adding charts leaves the charts pointing at `'Sheet'`, which Excel then reports as a broken external link (blank chart + "UNABLE TO REFRESH"). Set sheet titles before building charts.
 - Added `openpyxl` (+ `et-xmlfile`) to the root requirements.
+
+## Activity wearable: neural-net step counter — 2026-11-02
+
+- Week 2 assignment: "extend your walker to now count your steps using a neural net and PyTorch. Use every sensor you can to make it as accurate as possible."
+- Sam's decisions:
+  - No second MPU is available (the lab drawer has an MSA311 accelerometer only), so the second sensor is an **iPhone in the left front pocket**.
+  - Ground truth is **tap mode**, not video.
+  - Train in PyTorch, run on the board in numpy.
+  - Keep the activity classifier.
+  - **Remove the old stride counter**, keeping a copy in `train_steps.py` only to compare against.
+- New files:
+  - `ActivityWearable/phone/index.html`: streams DeviceMotion over MQTT to `ME193/Sam/wear/phone`.
+  - `python/steps.py`: inputs, the numpy forward pass, and the live `StepCounter`, shared by the board and training.
+  - `train_steps.py`: PyTorch training, leave-one-person-out comparison, figures, `steps_model.json`.
+- The phone page is served by GitHub Pages from `main` (root). A `.nojekyll` file at the repo root stops Jekyll from processing the repo.
+- `main.py` changes:
+  - Phone samples go onto the seq clock using the smallest (arrival − phone time) over the last 20 s.
+  - Each session also writes `<session>_phone.csv`.
+  - The `saved` event carries `first_seq`.
+  - Stride code is gone; `steps_total`, `step_rate_spm`, `step_net` and `phone` are added to `.../live`, and `phone` to `.../status`.
+- `record.py` changes:
+  - `--protocol steps` is now the default; `activity` gives week 1's protocol.
+  - Tap mode: f = left foot, j = right foot, space = either.
+  - Taps are saved to `data/<session>_taps.csv` on the board's clock (from the arrival times of the live samples).
+  - The header shows the phone, and a phone-check step was added.
+- `common.STEP_PROTOCOL`: calib, walk, walk 30 counted steps, turns, stop-start, fidget, stairs, jog, run, air-bike. Sessions that mix activities are labelled "mixed", and `train.py` now skips them.
+- Dashboard: How far uses steps × step length (0.37–0.45 × height walking, 0.5–0.8 running) plus the net's held-out error. It no longer shows pedal turns, and the header shows the phone.
+- torch 2.14.1 (and its dependencies) added to the root venv and `requirements.txt`.
+- Tested with no real tap data:
+  - Synthetic pipeline (scratch only): numpy vs torch differed by at most 5e-10, and the live counter equals the offline count.
+  - Real week-1 bike sessions: the old rule counts about 115 steps/min.
+  - Board `main.py` simulated with a fake Bridge and MQTT: 76 steps vs 79 taps, and 898/900 phone samples in the session file.
+  - Headless screenshots of the phone page (390 px) and the dashboard demo.
+- **Not yet:**
+  - deploying to the board (it wasn't reachable: no adb, no answer at any host)
+  - the phone page on a real iPhone
+  - recordings, and a trained `steps_model.json`

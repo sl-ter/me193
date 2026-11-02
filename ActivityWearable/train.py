@@ -62,7 +62,8 @@ plt.rcParams.update({
 
 # ---- Data -------------------------------------------------------------------
 def load():
-    rows = [r for r in csv.DictReader(open(SESSION_LOG)) if r["status"] == "kept"]
+    # "mixed" step-counting sessions (walk 30 steps, then stand) have no single activity.
+    rows = [r for r in csv.DictReader(open(SESSION_LOG)) if r["status"] == "kept" and r["label"] in LABELS]
     wins, people, labels = [], [], []
     for r in rows:
         path = DATA_DIR / f"{r['session']}.csv"

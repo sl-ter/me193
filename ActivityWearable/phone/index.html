@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Wearable Phone Sensor</title>
+<!--
+  The activity wearable's second sensor: an iPhone in the LEFT front pocket.
+  Streams the phone's accelerometer (incl. gravity, in g) and gyro (deg/s) over
+  MQTT to ME193/Sam/wear/phone, 10 messages a second, each sample stamped with
+  the phone's own clock. The board puts them on its sample clock (main.py,
+  class Phone) and feeds them to the step-counting network.
+
+  Hosted on GitHub Pages because iPhones only give motion data to https pages:
+  https://sl-ter.github.io/me193/ActivityWearable/phone/
+-->
+<style>
+  :root {
+    --bg: #fcfcfb; --surface: #ffffff; --text: #0b0b0b; --muted: #52514e; --border: #e6e5e0;
+    --good: #1baf7a; --bad: #e34948; --warn: #eda100; --accent: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111110; --surface: #1b1b1a; --text: #f2f1ee; --muted: #a3a29d; --border: #2e2e2c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+         padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; }
+  .row + .row { border-top: 1px solid var(--border); }
+  .k { color: var(--muted); }
+  .v { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  .on { background: var(--good); } .off { background: var(--bad); } .wait { background: var(--warn); }
+  button { width: 100%; font: 600 18px -apple-system, sans-serif; padding: 16px; border-radius: 12px; border: 0;
+           background: var(--accent); color: #fff; margin-bottom: 10px; }
+  button.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: 0.4; }
+  ul { padding-left: 20px; margin: 6px 0; color: var(--muted); font-size: 14px; }
+  #msg { color: var(--bad); font-size: 14px; min-height: 1.4em; }
+  #pocket { position: fixed; inset: 0; background: #000; color: #333; display: none; align-items: center;
+            justify-content: center; text-align: center; font-size: 15px; touch-action: none; user-select: none;
+            -webkit-user-select: none; z-index: 10; }
+  #pocket.show { display: flex; }
+</style>
+</head>
+<body>
+  <h1>Wearable phone sensor</h1>
+  <p class="sub">Streams this phone's motion to the activity wearable's step counter.</p>
+
+  <button id="start">Start</button>
+  <button id="pocket-btn" class="secondary" disabled>Pocket mode</button>
+  <div id="msg"></div>
+
+  <div class="card">
+    <div class="row"><span class="k">Motion sensors</span><span class="v" id="sensor"><span class="dot"></span>not started</span></div>
+    <div class="row"><span class="k">Broker</span><span class="v" id="broker"><span class="dot wait"></span>connecting…</span></div>
+    <div class="row"><span class="k">Board hears the phone</span><span class="v" id="board"><span class="dot"></span>–</span></div>
+    <div class="row"><span class="k">Acceleration |a|</span><span class="v" id="amag">–</span></div>
+    <div class="row"><span class="k">Screen stays on</span><span class="v" id="wake">–</span></div>
+  </div>
+
+  <div class="card">
+    <b>How to wear it</b>
+    <ul>
+      <li>Tap <b>Start</b> and allow motion access.</li>
+      <li>Tap <b>Pocket mode</b>. The screen goes black and ignores touches. Hold anywhere for 2 s to leave it.</li>
+      <li>Phone in your <b>LEFT front pocket</b>. Any way round is fine.</li>
+      <li>Don't lock the phone or switch apps: Safari stops the sensors when this page isn't on screen.</li>
+    </ul>
+  </div>
+
+  <div id="pocket">Streaming.<br>Hold for 2 s to leave pocket mode.</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+const TOPIC = "ME193/Sam/wear";
+const BROKER = "wss://broker.emqx.io:8084/mqtt";
+const SEND_EVERY_MS = 100;
+const KEEP_MS = 2000;            // while the broker is unreachable, keep at most this much to send later
+const G = 9.80665;
+const PAGE_ID = Math.random().toString(16).slice(2, 10);   // the board resets its clock estimate when this changes
+
+const $ = id => document.getElementById(id);
+const status = (id, cls, text) => { $(id).innerHTML = `<span class="dot ${cls}"></span>${text}`; };
+
+let pending = [], batch = 0, count = 0, lastRateAt = performance.now(), rate = 0, lastBoard = 0, boardPhone = null;
+let wakeLock = null, running = false;
+
+const client = mqtt.connect(BROKER, { clientId: "wear-phone-" + PAGE_ID, reconnectPeriod: 2000 });
+client.on("connect", () => { status("broker", "on", "connected"); client.subscribe(TOPIC + "/status"); });
+client.on("close", () => status("broker", "off", "reconnecting…"));
+client.on("message", (topic, payload) => {
+  try { const s = JSON.parse(payload); lastBoard = Date.now(); boardPhone = s.phone || null; } catch {}
+});
+
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity, r = e.rotationRate;
+  if (!a || a.x == null || !r || r.alpha == null) return;
+  const t = performance.timeOrigin + e.timeStamp;            // ms, the phone's clock
+  // rotationRate: alpha is about the phone's z axis, beta about x, gamma about y (deg/s).
+  pending.push([+t.toFixed(1), +(a.x / G).toFixed(4), +(a.y / G).toFixed(4), +(a.z / G).toFixed(4),
+                +r.beta.toFixed(2), +r.gamma.toFixed(2), +r.alpha.toFixed(2)]);
+  count++;
+  if (count % 10 === 0) $("amag").textContent = (Math.hypot(a.x, a.y, a.z) / G).toFixed(2) + " g";
+}
+
+setInterval(() => {
+  const now = performance.now();
+  if (now - lastRateAt >= 1000) { rate = count * 1000 / (now - lastRateAt); count = 0; lastRateAt = now; }
+  if (running) status("sensor", rate > 20 ? "on" : "wait", rate > 20 ? `${Math.round(rate)} Hz` : "no readings yet");
+  if (pending.length && client.connected) {
+    client.publish(TOPIC + "/phone", JSON.stringify({ id: PAGE_ID, n: batch++, s: pending }));
+    pending = [];
+  } else if (pending.length) {
+    const cutoff = pending[pending.length - 1][0] - KEEP_MS;
+    pending = pending.filter(s => s[0] >= cutoff);
+  }
+  const boardOn = Date.now() - lastBoard < 3000;
+  if (!boardOn) status("board", "", "wearable offline");
+  else if (boardPhone && boardPhone.on) status("board", "on", `yes, ${Math.round(boardPhone.rate_hz)} Hz`);
+  else status("board", "wait", running ? "not yet…" : "start the sensors");
+}, SEND_EVERY_MS);
+
+async function keepAwake() {
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    $("wake").textContent = "yes";
+    wakeLock.addEventListener("release", () => { $("wake").textContent = "no"; });
+  } catch { $("wake").textContent = "no: set Auto-Lock to Never"; }
+}
+document.addEventListener("visibilitychange", () => { if (running && document.visibilityState === "visible") keepAwake(); });
+
+$("start").onclick = async () => {
+  $("msg").textContent = "";
+  try {
+    if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+      const answer = await DeviceMotionEvent.requestPermission();
+      if (answer !== "granted") { $("msg").textContent = "Motion access was denied. Settings › Safari › Advanced › Website Data, remove this site, reload and try again."; return; }
+    }
+  } catch (err) { $("msg").textContent = "Couldn't ask for motion access: " + err.message; return; }
+  if (!running) window.addEventListener("devicemotion", onMotion);
+  running = true;
+  status("sensor", "wait", "starting…");
+  $("start").textContent = "Running";
+  $("start").disabled = true;
+  $("pocket-btn").disabled = false;
+  keepAwake();
+};
+
+// Pocket mode: a black screen that ignores touches; hold 2 s to leave.
+let holdTimer = null;
+$("pocket-btn").onclick = () => $("pocket").classList.add("show");
+$("pocket").addEventListener("pointerdown", e => {
+  e.preventDefault();
+  holdTimer = setTimeout(() => $("pocket").classList.remove("show"), 2000);
+});
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) $("pocket").addEventListener(ev, () => clearTimeout(holdTimer));
+$("pocket").addEventListener("touchmove", e => e.preventDefault(), { passive: false });
+</script>
+</body>
+</html>

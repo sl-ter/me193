@@ -9,6 +9,8 @@ Three classmates each try one activity live, so the models are trained on severa
 
 Status: **3 people recorded, both models trained** (2026-10-26). Held out (each person tested by a model trained on the others): **Model 1 80%, Model 2 99%**. **Live mode works:** the board classifies every 0.5 s and `dashboard.html` shows both models side by side.
 
+**Week 2 (11/2): a neural-net step counter.** The assignment: *"extend your walker to now count your steps using a neural net and PyTorch. Use every sensor you can to make it as accurate as possible."* An iPhone in the left front pocket is the second sensor; a small 1D convolutional network, trained in PyTorch on footstrikes an observer taps in by hand, counts the steps; last week's hand-tuned stride rule is gone from the board. See [Step counter](#step-counter-neural-net--112). Status: **built and tested on synthetic data; no tap-mode recordings yet, so no trained net or real results yet.**
+
 ## Hardware and wiring
 
 The UNO Q sits in its 3D-printed case with the GY-521 mounted on it. Both go in a sock-sleeve pocket on the **front of the lower shin**. A power bank in a front pocket powers it over USB-C.
@@ -160,11 +162,12 @@ The board times each session itself and saves it to `data/` in its app folder, s
 | Part | Shows |
 |---|---|
 | Model 1 card (decision tree) | its answer, the +Y peak on a gauge coloured by the 3 thresholds, and one sentence saying why |
-| Model 2 card (random forest) | its answer, the forest's vote for each class, posture (upright vs lying, the tree's own split at 0.94 g), shin swing (gyro X std), and steps/min or pedal rpm |
+| Model 2 card (random forest) | its answer, the forest's vote for each class, posture (upright vs lying, the tree's own split at 0.94 g), shin swing (gyro X std), and steps/min (the step net, last 5 s) or pedal rpm (gyro X's main frequency) |
 | Banner | whether the models agree. When Model 1 says still and Model 2 says bike, it explains why one number can't tell them apart |
 | Timeline | the last 60 s of answers, Model 1 and Model 2 |
 | Signal chart | the raw +Y acceleration for the last 5 s, with the thresholds drawn on it |
-| How far | the current stretch of activity: distance range for walk/run, pedal turns for bike, duration for still; the last 5 stretches; height and calibration controls |
+| How far | the current stretch of activity: the step net's steps and a distance range for walk/run, duration for bike and still; the last 5 stretches; height and calibration controls |
+| Header | board rate, and whether the phone is streaming |
 
 **Checked:**
 - Replaying recorded sessions through the board's `Live` class gave about 0.6 ms per answer on the laptop. On slow air-biking, Model 1 said still 87/87 times and Model 2 said bike 87/87.
@@ -173,27 +176,87 @@ The board times each session itself and saves it to `data/` in its app folder, s
 
 ## How far (distance per stretch of activity)
 
-**Strides (board, `main.py`):** every sample, the board watches −gx, the shin's forward swing.
-- It counts a stride when −gx rises past 120 °/s, re-arms once it falls below 40 °/s, and never counts two within 0.55 s.
-- On all 27 recorded sessions, the count was within a median 3% of each session's stride rate, and 0 on every still session.
-- While air-biking, the same swing comes once per pedal turn.
-- The 0.55 s gap fixed double counts on fast runs (39 → 34 strides). It caps counting at 1.8 strides a second (about 218 steps a minute).
+**Steps:** counted by the neural net (see [Step counter](#step-counter-neural-net--112)). Until 2026-11-02 the board counted *strides* with a hand-tuned rule on the shin's forward swing (−gx past 120 °/s, re-armed below 40 °/s, ≥ 0.55 s apart) and doubled them. That rule is gone from the board; `train_steps.py` keeps a copy only to compare against the net. On the week-1 air-biking sessions it counts about 115 "steps" a minute, since every pedal turn looks like a stride.
 
 **Stretches:** a stretch ("bout") is a run of the same Model 2 answer.
 - It ends only when a different answer holds for 2 answers in a row (1 s), so a flicker at a hallway turnaround doesn't split a walk.
-- `.../live` carries the current stretch (label, duration, strides), `strides_total`, and the last 6 stretches. `.../bout` gets each one as it ends.
-- Replaying TEOROM's stand → walk → run → lie → bike sessions back to back gave 5 stretches. Their lengths matched the sessions to within about 2 s, with 36 / 58 / 32 strides (walk / run / bike).
+- `.../live` carries the current stretch (label, duration, steps), `steps_total`, `step_rate_spm`, and the last 6 stretches. `.../bout` gets each one as it ends.
 
-**Distance (dashboard):** strides × stride length, shown as a range.
-- Stride length isn't measured. Without calibration it uses rough rules of thumb: stride ≈ 0.74–0.90 × height walking and 1.0–1.6 × height running. If no height is entered, 155–195 cm is assumed. A ±5% allowance for counting error is added on top.
+**Distance (dashboard):** steps × step length, shown as a range.
+- Step length isn't measured. Without calibration it uses rough rules of thumb: step ≈ 0.37–0.45 × height walking and 0.5–0.8 × height running (half of last week's stride ratios). If no height is entered, 155–195 cm is assumed. The net's own held-out count error (which the board reports from `steps_model.json`) is added on top; 10% until there is one.
 - These ratios aren't from a source I could verify. Step length does scale with height, but published ratios vary; treat them as heuristics.
-- **Calibrate** to narrow it: pick walk or run, enter a measured distance, press Start, cover the distance, press Stop. The stride length comes out as metres ÷ strides, and the range becomes about ±8% plus the counting allowance.
-- Height and calibration are saved in that browser (localStorage).
-- Air-biking shows pedal turns (it goes nowhere), and still shows only its duration.
+- **Calibrate** to narrow it: pick walk or run, enter a measured distance, press Start, cover the distance, press Stop. The step length comes out as metres ÷ steps, and the range becomes about ±8% plus the counting allowance.
+- Height and calibration are saved in that browser (localStorage). Calibrations from week 1 were per stride, so they don't carry over.
+- Air-biking and standing show only their duration (and any steps counted, which should be 0).
 - **Known limits:**
-  - each activity is recognised about 1.5 s late, so a stretch's first stride or two can land in the one before
-  - turns and pace changes add error
+  - steps come out about 1.3 s late and the activity about 1.5 s late, so a stretch's first step or two can land in the one before
   - a calibration only holds for that person and about that pace
+
+## Step counter (neural net) — 11/2
+
+**Sensors.** Everything the hardware has:
+- **Shin:** the MPU-6050's 3 accelerometer and 3 gyro axes, as last week. (Its temperature sensor is read and dropped; it doesn't change with steps.)
+- **Phone:** an iPhone in the **left** front pocket, so the net sees both legs. The shin mostly sees its own leg: during walks, its signal repeats once per stride, not once per step (autocorrelation 0.6–0.7 at one stride vs 0.1–0.3 at half a stride). The phone sends its accelerometer (including gravity) and gyro at about 60 Hz.
+- The lab drawer has an MSA311 accelerometer (no gyro) but no second MPU-6050; the phone is better and needs no wiring between the legs.
+
+**The phone page** (`phone/index.html`, served by GitHub Pages at <https://sl-ter.github.io/me193/ActivityWearable/phone/>, because iPhones only give motion data to https pages):
+- Start → allow motion → **Pocket mode** (black screen that ignores touches; hold 2 s to leave). The screen must stay on: Safari stops the sensors when the page isn't showing, so it asks for a wake lock (or set Auto-Lock to Never).
+- Publishes `ME193/Sam/wear/phone`, 10 messages a second: `{"id": page, "n": batch, "s": [[phone ms, ax, ay, az, gx, gy, gz], ...]}` in g and °/s, phone axes.
+- Shows whether the board hears it (it reads the board's `status`).
+
+**Putting the phone on the board's clock** (`main.py`, class `Phone`): arrival time − phone time = clock difference + network delay, so the smallest value over the last 20 s is the clock difference plus the quickest delivery. Samples are placed at phone time + that, i.e. late by at most the quickest delivery. In the simulation below that was a steady +61 ms (±1 ms). The same thing happens while recording and live, so the net trains on what it sees live.
+
+**Orientation-free phone inputs** (`python/steps.py`, `inputs()`): every pocket holds the phone differently, so gravity is estimated as its average acceleration over the surrounding second, and the net gets: *up* (acceleration along gravity − 1 g), *side* (size of the acceleration across it), *turn* (rotation about the vertical), *swing* (size of the rotation about horizontal axes: the thigh swinging), and *phone-on*. Plus the shin's 6 axes and |a|: 12 channels.
+
+**Ground truth: tap mode** (`record.py`). While a session records, the observer presses **f** at every left footstrike and **j** at every right one (space if unsure). Each tap is put on the board's clock the same way as the phone (from the arrival times of the board's live samples) and saved as `data/<session>_taps.csv` (`t_s,foot`, the same `t_s` as the session CSV). The board's `saved` event now carries `first_seq` so the two line up exactly.
+
+**Step protocol** (`common.STEP_PROTOCOL`, the default; `--protocol activity` gives week 1's): fit (wearable + phone), orientation, phone check, then 10 timed sessions, all tapped, about 5 min of recording:
+
+| Session | Label | s | Why |
+|---|---|---|---|
+| calib_stand | still | 10 | zero steps |
+| walk_normal | walk | 40 | the basic case |
+| walk_counted | mixed | 30 | walk exactly 30 steps counting out loud, then stand: checks the taps (record.py flags a mismatch) |
+| walk_turns | walk | 40 | turns every 5–6 steps |
+| walk_stopstart | mixed | 40 | 2–8 steps, stop, repeat |
+| fidget | mixed | 30 | weight shifts, foot taps, turning on the spot: what *isn't* a step |
+| stairs | walk | 40 | skippable |
+| run_easy / run_fast | run | 30 / 20 | |
+| bike_fast | bike | 30 | zero steps (the old rule's worst case) |
+
+"mixed" sessions have no single activity, so `train.py` leaves them out of the activity models. Week 1's still and bike sessions also count as zero-step sessions for the net (no taps needed).
+
+**The network** (`train_steps.py`; drawn in `figures/steps_network.png`):
+- 12 channels → 4 dilated 1D convolutions (9 taps each, spaced 1, 2, 4, 8 samples apart, 16 channels, ReLU) → 1 output: the probability that a foot hit the ground at that sample. About 8.7k weights. Each output sees 0.6 s either side (1.1 s with the phone's gravity average), so steps come out about 1.3 s late.
+- Trained to output a narrow bump (σ = 40 ms) at every tap; loss = binary cross-entropy, weighted up near taps. Adam, 25 epochs × 100 batches of 64 random 4 s crops.
+- Augmentation: the phone hidden 30% of the time (so it still counts without one), the shin sensor tilted up to 10°, time stretched ±10% (cadence), amplitudes ±15%, the phone's clock shifted ±50 ms, noise.
+- Steps = peaks above a threshold, ≥ 0.2 s apart. The threshold is picked on the training people only (closest totals, with and without the phone).
+- Evaluated leave one person out, like last week: count error per session, false steps per minute in zero-step sessions, and F1 of found steps vs taps (within 150 ms). Three ways: the net with the phone, the net with the shin only, and last week's rule × 2.
+
+**On the board:** `main.py` feeds every shin and phone sample to `steps.StepCounter`, which runs the exported net (`python/steps_model.json`) in numpy every 0.25 s. "Trained in PyTorch, run in numpy": training is where PyTorch is needed; running the net is just its multiplications, so the board doesn't need the big PyTorch install. `train_steps.py` checks the numpy version matches PyTorch and that the live counter finds exactly the steps that counting a whole recording at once does.
+
+**Checked so far** (no tap-mode data exists yet, so on stand-ins):
+- **Pipeline test on synthetic data** (in a scratch folder, not in `data/`): week 1's 27 sessions with fake taps (the old rule's strides plus midpoints) and a fake phone (the shin signal shifted half a stride and randomly rotated, at 60 Hz with jitter). `train_steps.py` ran end to end; numpy vs PyTorch differed by at most 5e-10; the live `StepCounter` matched the whole-recording count exactly on 3 sessions. The accuracy numbers from fake taps mean nothing (the taps *were* the old rule). One real number: on week 1's zero-step sessions, the old rule counted 115 steps a minute while air-biking.
+- **Board app in a simulation:** the real `main.py` with a fake Bridge (replaying a recorded walk at 100 Hz), fake MQTT, the phone stream delivered 80 ms late and a simulated clock: counted 76 steps vs 79 fake taps, recorded a 15 s session with 898/900 phone samples in `_phone.csv`, phone status 60 Hz.
+- **Phone page and dashboard** screenshotted in headless Chrome (390 px wide; dashboard `?demo`). The phone page hasn't run on an iPhone yet.
+- Not yet: the app on the real board, the phone page on a real iPhone, real tap data, a trained net.
+
+**Run it:**
+```bash
+source venv/bin/activate
+python ActivityWearable/record.py --person SL        # step protocol, tap mode
+UNOQ_HOST=<ip> python ActivityWearable/pull_data.py  # sessions + _phone.csv files
+python ActivityWearable/train_steps.py               # ~3 min per person on a laptop CPU
+UNOQ_HOST=<ip> python3 tools/deploy.py ActivityWearable/unoq/activity-wearable   # ships steps_model.json
+```
+torch 2.14.1 is now in the root `requirements.txt`.
+
+| Figure | Shows |
+|---|---|
+| `steps_example.png` | a held-out walk: shin gx, phone swing, the net's output with the taps and the steps it found, and the old rule's strides |
+| `steps_comparison.png` | count error per activity and false steps per minute when still or biking: net + phone vs net, shin only vs the old rule |
+| `steps_network.png` | the network as a diagram |
+| `steps_results.json` | every number, per session |
 
 ## Network notes (2026-10-26)
 
@@ -270,13 +333,15 @@ Results, 2026-10-26: 1569 windows from SL, TEOROM and MAYA.
 
 | Path | What it is |
 |---|---|
-| `common.py` | broker/topic settings, data paths, the recording protocol |
-| `record.py` | guided recording session (laptop) |
+| `common.py` | broker/topic settings, data paths, both recording protocols (`STEP_PROTOCOL`, `PROTOCOL`) |
+| `record.py` | guided recording session (laptop), with tap mode for step sessions |
+| `train_steps.py` | the step net: PyTorch training, leave-one-person-out comparison with the old rule, figures, `steps_model.json` |
+| `phone/index.html` | the phone page (GitHub Pages), streams the iPhone's motion over MQTT |
 | `pull_data.py` | copies sessions off the board into `data/` |
 | `train.py` | windows, leave-one-person-out evaluation, figures, `models.json` |
 | `figure_models.py` | draws `figures/models_overview.png` (run after `train.py`) |
 | `dashboard.html` | live demo display (browser, MQTT over WebSockets) |
 | `figures/` | the figures + `results.json` |
-| `unoq/activity-wearable/` | the wearable's App Lab app (sketch + Python). `python/features.py` (windows + features) and `python/classify.py` (runs `models.json` with numpy only) are shared with `train.py`, so the laptop and the board compute features identically |
+| `unoq/activity-wearable/` | the wearable's App Lab app (sketch + Python). `python/features.py` (windows + features) and `python/classify.py` (runs `models.json` with numpy only) are shared with `train.py`, and `python/steps.py` (the step net's inputs, numpy forward pass and live counter) with `train_steps.py`, so the laptop and the board compute everything identically |
 | `unoq/imu-check/` | bench-check App Lab app (sketch + Python) |
-| `data/` | recorded sessions + `session_log.csv` (`data/live/` is gitignored) |
+| `data/` | recorded sessions + `session_log.csv`; step sessions also have `_phone.csv` (from the board) and `_taps.csv` (from the laptop) (`data/live/` is gitignored) |

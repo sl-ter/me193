@@ -30,3 +30,6 @@ MAYA_run_fast_20261026-171435,MAYA,right,run_fast,run,30,3000,0,False,kept,2026-
 MAYA_lie_still_20261026-171527,MAYA,right,lie_still,still,30,3000,0,True,kept,2026-10-26T17:16:18
 MAYA_bike_slow_20261026-171619,MAYA,right,bike_slow,bike,45,4500,0,True,kept,2026-10-26T17:17:15
 MAYA_bike_fast_20261026-171717,MAYA,right,bike_fast,bike,30,3000,0,True,kept,2026-10-26T17:17:56
+SL_calib_stand_20261102-180615,SL,right,calib_stand,still,10,1000,0,True,kept,2026-11-02T18:06:35
+SL_walk_normal_20261102-182117,SL,right,walk_normal,walk,40,4000,0,True,kept,2026-11-02T18:22:19
+SL_walk_normal_20261102-182248,SL,right,walk_normal,walk,40,,,False,discarded,2026-11-02T18:23:49

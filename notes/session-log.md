@@ -712,3 +712,11 @@ real bugs plus a round of feature requests.
   - The offline hint no longer mentions a phone hotspot (Sam isn't using one).
 - Tested: a fake-board harness (normal, lost first command, lost events), and the board simulation with a duplicate command and a `loop_stop()` that hangs 5 s (0 drops).
 - Deployed. The first Wi-Fi deploy left the sketch unresponsive (Bridge `imu_status` timeouts); a second deploy reflashed it and it's fine (100 Hz, IMU found).
+
+## Activity wearable: checking the taps' sync — 2026-11-02
+
+- Checked Sam's kept walk (`SL_walk_normal_20261102-182117`): 59 taps vs 29–31 right-shin strides, alternating feet 100%, gaps 0.61–0.81 s. The right-foot taps sit -138 ms from the right heel strikes (|a| peaks over 2 g), IQR 57 ms. Good data.
+- The discarded walk (`182248`) had an offset of -7 ms. So the laptop's board-clock estimate shifts by about 0.1 s between sessions.
+- `train_steps.py` now shifts each session's taps so the right-foot taps sit on the right heel strikes (median, if at least 6 match within 250 ms). The left-foot taps move with them. The shift is reported as `tap_shift_ms`.
+- `record.py`'s results screen now shows the same check: % of right taps matched, the offset, and the spread. It flags a spread over 120 ms or under 70% matched.
+- The board survived a Wi-Fi drop mid-session with the fixes: 4000/4000 rows, 0 drops.

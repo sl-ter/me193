@@ -64,6 +64,8 @@ NET_REACH = (KERNEL - 1) * sum(DILATIONS) // 2          # 60 samples each side
 SIGMA = 4                # samples: width of the bump trained at each tap
 MIN_GAP = 20             # samples: steps at least 0.2 s apart (5 a second is a sprint)
 TOL = 15                 # samples: a found step within 150 ms of a tap counts as that tap
+STRIKE_G = 2.0           # a right heel strike = a peak in the shin's |a| above this, the biggest within 0.3 s
+MATCH = 25               # samples: a right-foot tap within 250 ms of a heel strike is matched to it
 
 # Training
 CROP = 400               # rows of inputs per training example (4 s)
@@ -105,15 +107,20 @@ def load(data_dir):
         if r["status"] != "kept" or not path.exists():
             continue
         taps_path = data_dir / f"{r['session']}_taps.csv"
+        shin = np.array(read_csv(path, list(range(1, 7))), dtype=float)
+        shift = None
         if taps_path.exists():
-            taps = load_taps(taps_path, path)
-            if taps is None:
+            loaded = load_taps(taps_path, path)
+            if loaded is None:
                 continue
+            taps, feet = loaded
+            shift = tap_offset(taps, feet, shin)
+            if shift is not None:
+                taps = taps - shift
         elif r["label"] in ("still", "bike"):
             taps = np.zeros(0)               # zero-step session from before tap mode
         else:
             continue
-        shin = np.array(read_csv(path, list(range(1, 7))), dtype=float)
         phone_path = data_dir / f"{r['session']}_phone.csv"
         ph = np.array(read_csv(phone_path, list(range(7))), dtype=float) if phone_path.exists() else np.zeros((0, 7))
         phone, on = S.phone_on_grid(ph[:, 0] * S.RATE_HZ, ph[:, 1:7], np.arange(len(shin)))
@@ -122,21 +129,44 @@ def load(data_dir):
             "name": r["session"], "person": r["person"], "label": r["label"], "activity": r["activity"],
             "shin": shin, "phone": phone, "on": on, "taps": np.sort(taps), "has_phone": bool(on.any()),
             "X": X, "X_shin": S.inputs(shin, phone, np.zeros(len(shin), dtype=bool)),
-            "y": bumps(taps, len(X)),
+            "y": bumps(taps, len(X)), "tap_shift": None if shift is None else round(shift * 10),
         })
     return sessions
 
 
+def heel_strikes(shin):
+    amag = np.linalg.norm(shin[:, :3], axis=1)
+    pad = np.concatenate([np.zeros(30), amag, np.zeros(30)])
+    win = np.lib.stride_tricks.sliding_window_view(pad, 61)
+    return np.flatnonzero((np.argmax(win, axis=1) == 30) & (amag > STRIKE_G))
+
+
+def tap_offset(taps, feet, shin):
+    """How far the right-foot taps sit from the right shin's heel strikes
+    (median, in samples), or None if fewer than 6 match. The laptop's estimate
+    of the board's clock varies by ~0.1 s between sessions (2026-11-02: -138
+    vs -7 ms), so each session's taps are shifted by this to sit on its heel
+    strikes; the left-foot taps share the same clock and move with them."""
+    strikes = heel_strikes(shin)
+    right = taps[feet == "right"]
+    if len(strikes) == 0 or len(right) == 0:
+        return None
+    off = np.array([t - strikes[np.argmin(np.abs(strikes - t))] for t in right])
+    off = off[np.abs(off) <= MATCH]
+    return float(np.median(off)) if len(off) >= 6 else None
+
+
 def load_taps(taps_path, session_path):
-    """Tap times in samples from the session's start. A tap file written when
-    the board's "saved" message never arrived has seq but no t_s; the start
-    (first_seq) is then on the session CSV's "# end" line."""
+    """Tap times in samples from the session's start, and which foot. A tap
+    file written when the board's "saved" message never arrived has seq but no
+    t_s; the start (first_seq) is then on the session CSV's "# end" line."""
     with open(taps_path) as f:
         rows = [line.strip().split(",") for line in f if line.strip() and not line.startswith("#")]
     head, body = rows[0], rows[1:]
     t_s = [r[head.index("t_s")] for r in body]
+    feet = np.array([r[head.index("foot")] for r in body])
     if all(t_s):
-        return np.array([float(t) for t in t_s]) * S.RATE_HZ
+        return np.array([float(t) for t in t_s]) * S.RATE_HZ, feet
     first = None
     for line in open(session_path):
         if line.startswith("# end") and "first_seq=" in line:
@@ -145,7 +175,8 @@ def load_taps(taps_path, session_path):
         print("  no first_seq for", taps_path.name, "(skipped)")
         return None
     seqs = np.array([float(r[head.index("seq")]) for r in body]) - first
-    return seqs[(seqs >= 0) & (seqs < sum(1 for line in open(session_path) if line[:1].isdigit()))]
+    keep = (seqs >= 0) & (seqs < sum(1 for line in open(session_path) if line[:1].isdigit()))
+    return seqs[keep], feet[keep]
 
 
 def bumps(taps, n):
@@ -275,7 +306,8 @@ def tune_threshold(net_spec, sessions):
 
 def evaluate(spec, s):
     row = {"session": s["name"], "person": s["person"], "label": s["label"], "activity": s["activity"],
-           "seconds": round(len(s["shin"]) / S.RATE_HZ, 1), "taps": len(s["taps"]), "has_phone": s["has_phone"]}
+           "seconds": round(len(s["shin"]) / S.RATE_HZ, 1), "taps": len(s["taps"]), "has_phone": s["has_phone"],
+           "tap_shift_ms": s["tap_shift"]}
     for key, X in (("net_phone", s["X"]), ("net_shin", s["X_shin"])):
         at, _ = found(spec, X)
         row[key] = len(at)

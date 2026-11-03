@@ -258,6 +258,32 @@ def tap_checks(step, taps, seconds):
                  f": expected {lo}-{hi} a second for {step.label}. Missed some?"))]
 
 
+def sync_check(board, rows, taps):
+    """Right-foot taps against the right shin's heel strikes (|a| peaks over
+    2 g) in the live samples. A steady offset is fine (train_steps.py removes
+    it); a wide spread means the taps don't follow the footstrikes."""
+    right = [board.seq_at(t) for t, foot in taps if foot == "right"]
+    right = [x for x in right if x is not None]
+    if len(rows) < 200 or len(right) < 6:
+        return []
+    seqs = [r[0] for r in rows]
+    amag = [(r[1] ** 2 + r[2] ** 2 + r[3] ** 2) ** 0.5 for r in rows]
+    strikes = [seqs[i] for i in range(len(amag)) if amag[i] > 2.0 and
+               amag[i] == max(amag[max(0, i - 30):i + 31])]
+    if not strikes:
+        return [(False, "No heel strikes over 2 g in the live data: can't check the taps' timing.")]
+    off = sorted(x - min(strikes, key=lambda s: abs(s - x)) for x in right)
+    off = [o for o in off if abs(o) <= 25]
+    matched = len(off) / len(right)
+    if len(off) < 6:
+        return [(False, f"Only {len(off)}/{len(right)} right-foot taps are near a right heel strike. Redo?")]
+    spread = (off[3 * len(off) // 4] - off[len(off) // 4]) * 10
+    ok = matched >= 0.7 and spread <= 120
+    return [(ok, f"Right-foot taps vs heel strikes: {matched * 100:.0f}% matched, "
+                 f"{off[len(off) // 2] * 10:+.0f} ms offset, spread {spread:.0f} ms" +
+                 ("." if ok else ": the taps don't follow the steps well. Redo?"))]
+
+
 def save_taps(board, name, taps, first_seq, seconds):
     """data/<session>_taps.csv: each tap's sample number on the board's clock
     (seq), and its time from the session's first sample (t_s, the same as the
@@ -503,12 +529,14 @@ class Recorder:
             if left < -10 and stats is None:
                 return self.unconfirmed(i, name, step, taps)
 
+        live_rows = list(b.capture or [])
         save_live_copy(b, name, step.seconds)
         aborted = stats.get("type") == "aborted"
         checks = [] if aborted else quality(step, stats)
         if step.taps and not aborted:
             saved = save_taps(b, name, taps, stats.get("first_seq"), step.seconds)
             checks += tap_checks(step, taps, step.seconds)
+            checks += sync_check(b, live_rows, taps)
             if saved < len(taps):
                 checks.append((False, f"Only {saved} of {len(taps)} taps could be placed on the board's clock. Redo it?"))
             if not stats.get("phone_rows"):

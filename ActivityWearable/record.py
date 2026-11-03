@@ -259,28 +259,28 @@ def tap_checks(step, taps, seconds):
 
 
 def sync_check(board, rows, taps):
-    """Right-foot taps against the right shin's heel strikes (|a| peaks over
-    2 g) in the live samples. A steady offset is fine (train_steps.py removes
-    it); a wide spread means the taps don't follow the footstrikes."""
+    """Right-foot taps against the right shin's forward swing (once per
+    stride: -gx past 120 deg/s, re-armed below 40, >= 0.55 s apart) in the
+    live samples. A steady offset is fine (train_steps.py removes it); a wide
+    spread means the taps don't follow the steps. (Walking walks ~45-80 ms,
+    jogging and stairs ~180 ms on 2026-11-02.)"""
     right = [board.seq_at(t) for t, foot in taps if foot == "right"]
-    right = [x for x in right if x is not None]
+    right = sorted(x for x in right if x is not None)
     if len(rows) < 200 or len(right) < 6:
         return []
-    seqs = [r[0] for r in rows]
-    amag = [(r[1] ** 2 + r[2] ** 2 + r[3] ** 2) ** 0.5 for r in rows]
-    strikes = [seqs[i] for i in range(len(amag)) if amag[i] > 2.0 and
-               amag[i] == max(amag[max(0, i - 30):i + 31])]
-    if not strikes:
-        return [(False, "No heel strikes over 2 g in the live data: can't check the taps' timing.")]
-    off = sorted(x - min(strikes, key=lambda s: abs(s - x)) for x in right)
-    off = [o for o in off if abs(o) <= 25]
-    matched = len(off) / len(right)
-    if len(off) < 6:
-        return [(False, f"Only {len(off)}/{len(right)} right-foot taps are near a right heel strike. Redo?")]
+    swings, armed, last = [], True, -10 ** 9
+    for r in rows:
+        if armed and -r[4] > 120 and r[0] - last >= 55:
+            swings.append(r[0])
+            last, armed = r[0], False
+        elif not armed and -r[4] < 40:
+            armed = True
+    if len(swings) < 3:
+        return [(False, "Hardly any strides in the live data: can't check the taps' timing.")]
+    off = sorted(x - min(swings, key=lambda s: abs(s - x)) for x in right)
     spread = (off[3 * len(off) // 4] - off[len(off) // 4]) * 10
-    ok = matched >= 0.7 and spread <= 120
-    return [(ok, f"Right-foot taps vs heel strikes: {matched * 100:.0f}% matched, "
-                 f"{off[len(off) // 2] * 10:+.0f} ms offset, spread {spread:.0f} ms" +
+    ok = spread <= 200
+    return [(ok, f"Right-foot taps vs strides: {off[len(off) // 2] * 10:+.0f} ms offset, spread {spread:.0f} ms" +
                  ("." if ok else ": the taps don't follow the steps well. Redo?"))]
 
 

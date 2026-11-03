@@ -1,0 +1,26 @@
+# taps from record.py: f = left foot, j = right foot, space = either; 188 live messages set the clock
+t_s,seq,foot
+,112240.6,right
+,112277.4,left
+,112316.9,right
+,112353.1,left
+,112389.7,right
+,112423.6,left
+,112458.4,right
+,112489.1,left
+,112521.5,right
+,112551.3,left
+,112589.1,right
+,112621.1,left
+,112655.6,right
+,112687.9,left
+,112725.0,right
+,112755.7,left
+,112790.7,right
+,112821.0,left
+,112857.3,right
+,112891.5,left
+,112927.5,right
+,112956.7,left
+,112993.0,right
+,113028.2,left

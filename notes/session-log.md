@@ -726,3 +726,15 @@ real bugs plus a round of feature requests.
 - `record.py` sometimes sat 10 s past a session's end (25 s after an x abort). The live samples kept arriving, but the single saved/aborted event was lost. The laptop walks too, so its Wi-Fi blips, and a QoS 1 message published while a clean-session subscriber is away is gone.
 - Fix: the board repeats its last result (`last`) in every status message (twice a second), and `record.py` takes it from there. The unconfirmed wait is cut from 10 s to 6 s.
 - Tested with the fake board: events lost, status has the result → done in 4.5 s (was 14 s). Deployed (board idle first).
+
+## Activity wearable: step net trained on 6 people, training timelapse — 2026-11-03
+
+- Data: BANJO (two sittings, sleeve refit in between) and DHRUV added, on top of SL, RUBYA and MAYA (TEOROM: zero-step sessions only). 70 sessions, 37 tapped, 2110 taps. RUBYA's `run_fast` is empty (a wire broke) and is skipped.
+- `train_steps.py`, two corrections:
+  - Compare on the same span: the net's output starts 1.1 s into a recording and stops 1.1 s before its end, so 110 of the 2110 taps were out of its reach. Taps, the old rule and F1 now use only the span it can count (`seen()`, `taps_seen`). Live, the stream has no edges.
+  - Threshold from held-out output: tuned on each fold's own training people it came out 0.60 everywhere and missed steps on new people (DHRUV 308 vs 375). Now each fold's threshold is picked on the other folds' held-out output, and the board's net uses the best over all of them (0.50). Fold thresholds are in `steps_results.json`.
+- Results, held out: net + phone median error 2.0% per session (shin only 2.9%, last week's rule 2.6%); air-biking 0.35 false steps/min vs the rule's 106. All tapped sessions: 2006 steps vs 2000 taps (rule 2010). Worst: DHRUV −8.5%, and BANJO's shuffling stop-start walk.
+- Checked BANJO for wiring faults (Sam had re-fixed wires): 0 gaps, 0 drops, no zeroed or saturated rows, repeated-row rate like everyone else's. Not the wires; BANJO's stop-start steps are small and slow, unlike anyone in training.
+- New `timelapse_steps.py` + `timelapse.html`: one fold (BANJO held out) re-trained identically and snapshotted 283 times; the page plays back the net's output on 4 recordings, both losses and the step counts. Last frame = BANJO's line in `train_steps.py`. `train()` takes a `snapshot` callback for it.
+- Deployed the final net over USB (board on XFSsetup9084 at 10.0.0.32, which VS Code couldn't reach: macOS blocks its local-network access). The app runs, but the board reports `IMU: not found` (wiring, after collection was done).
+- This file had been cut down to its last entry on 2026-11-02 (a write that replaced it instead of appending). Rebuilt from the last commit plus one uncommitted entry, recovered from the session transcript.

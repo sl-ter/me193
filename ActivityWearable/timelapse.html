@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Step Net Timelapse</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!--
+  Plays back the step-counting net learning, frame by frame, from
+  figures/steps_timelapse.json (python ActivityWearable/timelapse_steps.py).
+  One person is held out: everything shown is on recordings the net never
+  trains on. Serve the folder (browsers won't fetch from file://):
+    cd ActivityWearable && python -m http.server 8000   ->  http://localhost:8000/timelapse.html
+  Also at https://sl-ter.github.io/me193/ActivityWearable/timelapse.html
+-->
+<style>
+  /* Layout: controls on top, four recordings as small multiples, then loss and
+     step-count curves with a shared playhead, then the per-session table. */
+  :root {
+    --surface-0: #f3f2ee; --surface-1: #fcfcfb; --border: #e2e1dc; --grid: #ebeae5;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #8a8985;
+    --net-phone: #2a78d6; --net-shin: #eb6834; --old-rule: #1baf7a; --signal: #b9b8b2;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c; --grid: #262624;
+      --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e88;
+      --net-phone: #3987e5; --net-shin: #d95926; --old-rule: #199e70; --signal: #4a4a47;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c; --grid: #262624;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e88;
+    --net-phone: #3987e5; --net-shin: #d95926; --old-rule: #199e70; --signal: #4a4a47;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface-0); color: var(--text-primary);
+    font: 15px/1.45 var(--font);
+    padding-block: 20px 32px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; display: grid; gap: 16px; }
+  header h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+  header p { margin: 4px 0 0; color: var(--text-secondary); font-size: 14px; max-width: 75ch; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; min-width: 0; }
+  .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+
+  /* Player */
+  .player { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; }
+  button, select {
+    font: 600 14px var(--font); color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; cursor: pointer;
+  }
+  button.primary { background: var(--net-phone); border-color: transparent; color: #fff; min-width: 92px; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--net-phone); outline-offset: 2px; }
+  input[type=range] { width: 100%; accent-color: var(--net-phone); }
+  .readout { font: 13px var(--mono); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .player-right { display: flex; gap: 10px; align-items: center; }
+  @media (max-width: 640px) {
+    .player { grid-template-columns: auto 1fr; }
+    .player-right { grid-column: 1 / -1; justify-content: space-between; }
+  }
+
+  /* Headline numbers */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .stat { padding: 12px 14px; }
+  .stat .v { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap; }
+  .stat .v small { font-size: 14px; color: var(--text-secondary); font-weight: 500; }
+  .stat .k { display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+  /* Recordings */
+  .windows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 820px) { .windows { grid-template-columns: minmax(0, 1fr); } }
+  .win h3 { margin: 0; font-size: 15px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .win h3 span { font-weight: 500; color: var(--text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .curves { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 820px) { .curves { grid-template-columns: minmax(0, 1fr); } }
+  .curves h3 { margin: 0 0 2px; font-size: 15px; }
+  .curves .note { margin: 0; font-size: 13px; color: var(--text-secondary); }
+  svg { display: block; width: 100%; overflow: visible; }
+  svg text { font: 11px var(--font); fill: var(--text-muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--text-secondary); margin-top: 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .key-line { width: 16px; height: 0; border-top: 2px solid; }
+  .key-line.dash { border-top-style: dashed; }
+  .key-tick { width: 2px; height: 12px; background: var(--text-primary); border-radius: 1px; }
+  .key-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--net-phone); box-shadow: 0 0 0 2px var(--surface-1); }
+  .key-tri { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 8px solid var(--old-rule); }
+
+  /* Table */
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+  td.err { color: var(--text-secondary); }
+  tfoot td { font-weight: 700; border-bottom: 0; }
+
+  #tip {
+    position: fixed; pointer-events: none; z-index: 5; background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.5;
+    box-shadow: 0 4px 14px rgb(0 0 0 / .12); font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  #msg { color: var(--text-secondary); }
+  #msg code { font: 13px var(--mono); background: var(--surface-0); padding: 1px 5px; border-radius: 5px; }
+  footer { font-size: 13px; color: var(--text-muted); max-width: 80ch; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Step net, learning to count</h1>
+    <p id="sub">Loading the recorded training run…</p>
+  </header>
+
+  <div class="card player" id="player" hidden>
+    <button class="primary" id="play" aria-label="Play">Play</button>
+    <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Training progress">
+    <div class="player-right">
+      <span class="readout" id="readout">–</span>
+      <select id="speed" aria-label="Playback speed">
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="stats" id="stats" hidden></div>
+  <div class="windows" id="windows"></div>
+  <div class="curves" id="curves" hidden>
+    <div class="card">
+      <h3>Loss</h3>
+      <p class="note">Weighted cross-entropy against the tap bumps. Lower is better.</p>
+      <svg id="loss" height="210" role="img" aria-label="Loss over training"></svg>
+      <div class="legend">
+        <span><i class="key-line" style="border-color:var(--text-muted)"></i>Training clips (augmented)</span>
+        <span><i class="key-line" style="border-color:var(--net-phone)"></i>Held-out recordings</span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Steps counted on the held-out person</h3>
+      <p class="note">All their tapped sessions together, at a threshold picked on the other people's held-out results.</p>
+      <svg id="count" height="210" role="img" aria-label="Steps counted over training"></svg>
+      <div class="legend">
+        <span><i class="key-line" style="border-color:var(--net-phone)"></i>Net, shin + phone</span>
+        <span><i class="key-line" style="border-color:var(--net-shin)"></i>Net, shin only</span>
+        <span><i class="key-line dash" style="border-color:var(--old-rule)"></i>Last week's rule</span>
+        <span><i class="key-line dash" style="border-color:var(--text-primary)"></i>Taps (truth)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="table-card" hidden>
+    <div class="eyebrow" style="margin-bottom:8px">Each held-out session, at the current frame</div>
+    <div class="table-wrap"><table id="table"></table></div>
+  </div>
+
+  <p id="msg"></p>
+  <footer id="foot" hidden>
+    Made by <code>timelapse_steps.py</code>: one leave-one-person-out fold of <code>train_steps.py</code>, trained
+    the same way (same seed and sessions), snapshotted every 2–10 updates. Each update is a batch of 4-second
+    clips, randomly tilted, stretched and scaled, with the phone hidden in 30% of them. The recordings above
+    are not augmented.
+  </footer>
+</div>
+<div id="tip" hidden></div>
+
+<script>
+const NAMES = {
+  walk_normal: "Walking", walk_counted: "Counted walk", walk_turns: "Walk with turns",
+  walk_stopstart: "Stop-start walk", fidget: "Fidgeting", stairs: "Stairs", run_easy: "Easy run",
+  run_fast: "Fast run", bike_fast: "Air-bike (no steps)", calib_stand: "Standing",
+};
+const $ = id => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs = {}, parent) => {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+const fmt = n => n.toLocaleString("en-US");
+const pct = (n, truth) => truth ? `${n - truth >= 0 ? "+" : "−"}${Math.abs((n - truth) / truth * 100).toFixed(1)}%` : (n ? `${n} false` : "0");
+const sum = a => a.reduce((x, y) => x + y, 0);
+
+let D, cur = 0, playing = false, last = 0, acc = 0;
+const FPS = 12;
+const views = [];          // per-recording render state
+let lossView, countView;
+
+function tip(html, x, y) {
+  const t = $("tip");
+  t.innerHTML = html; t.hidden = false;
+  const r = t.getBoundingClientRect();
+  t.style.left = Math.min(x + 14, innerWidth - r.width - 8) + "px";
+  t.style.top = Math.max(8, y - r.height - 10) + "px";
+}
+const hideTip = () => { $("tip").hidden = true; };
+
+// ---- One recording: taps, the net's output, the shin signal -----------------
+function buildWindow(w, k) {
+  const card = document.createElement("div");
+  card.className = "card win";
+  card.innerHTML = `<h3>${NAMES[w.activity] || w.activity}<span id="wh${k}"></span></h3>`;
+  const svg = el("svg", { height: 214, role: "img", "aria-label": `${w.activity}: the net's output over 8 seconds` }, card);
+  if (k === 0) {
+    const lg = document.createElement("div");
+    lg.className = "legend";
+    lg.innerHTML = `<span><i class="key-tick"></i>Taps (truth)</span>
+      <span><i class="key-line" style="border-color:var(--net-phone)"></i>P(foot hits the ground)</span>
+      <span><i class="key-dot"></i>Steps it counts</span>
+      <span><i class="key-line dash" style="border-color:var(--text-muted)"></i>Threshold</span>
+      <span><i class="key-tri"></i>Last week's rule: a stride</span>`;
+    card.appendChild(lg);
+  }
+  $("windows").appendChild(card);
+  views.push({ w, svg, k });
+}
+
+function layoutWindow(v) {
+  const { w, svg } = v;
+  const W = svg.clientWidth || 560, L = 34, R = 8;
+  svg.setAttribute("viewBox", `0 0 ${W} 214`);
+  svg.innerHTML = "";
+  const n = w.gx.length, T = n * w.dt;
+  const x = t => L + (t / T) * (W - L - R);
+  const P0 = 128, P1 = 26;                                   // probability band (y of 0 and 1)
+  const y = p => P0 - p * (P0 - P1);
+  const G0 = 206, G1 = 146;                                  // shin gx band
+  const gmax = Math.max(50, ...w.gx.map(Math.abs));
+  const gy = g => (G0 + G1) / 2 - g / gmax * (G0 - G1) / 2;
+  for (const p of [0, 0.5, 1]) {
+    el("line", { x1: L, x2: W - R, y1: y(p), y2: y(p), stroke: "var(--grid)" }, svg);
+    el("text", { x: L - 6, y: y(p) + 4, "text-anchor": "end" }, svg).textContent = p;
+  }
+  el("text", { x: L - 6, y: 15, "text-anchor": "end" }, svg).textContent = "taps";
+  el("text", { x: L - 6, y: (G0 + G1) / 2 + 4, "text-anchor": "end" }, svg).textContent = "shin";
+  // Shin forward swing (gx), with last week's stride marks on it
+  el("path", { d: w.gx.map((g, i) => `${i ? "L" : "M"}${x(i * w.dt).toFixed(1)},${gy(g).toFixed(1)}`).join(""),
+               fill: "none", stroke: "var(--signal)", "stroke-width": 1.5 }, svg);
+  for (const s of w.strides) el("path", { d: `M${x(s) - 5},${G1 - 1} l5,-8 l5,8 z`, fill: "var(--old-rule)" }, svg);
+  for (const s of w.taps) el("line", { x1: x(s), x2: x(s), y1: 6, y2: 20, stroke: "var(--text-primary)", "stroke-width": 2, "stroke-linecap": "round" }, svg);
+  if (!w.taps.length) el("text", { x: L + 4, y: 17 }, svg).textContent = "no steps here: anything it counts is a false step";
+  v.thr = el("line", { x1: L, x2: W - R, stroke: "var(--text-muted)", "stroke-dasharray": "4 4" }, svg);
+  v.path = el("path", { fill: "none", stroke: "var(--net-phone)", "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+  v.dots = el("g", {}, svg);
+  v.cursor = el("line", { y1: P1 - 4, y2: G0, stroke: "var(--text-muted)", visibility: "hidden" }, svg);
+  Object.assign(v, { x, y, T, L, R, W });
+  const hit = el("rect", { x: L, y: 0, width: W - L - R, height: 214, fill: "transparent" }, svg);
+  hit.addEventListener("pointermove", e => {
+    const r = svg.getBoundingClientRect();
+    const t = Math.max(0, Math.min(T, (e.clientX - r.left - L) / (r.width - L - R) * T));
+    const i = Math.min(n - 1, Math.round(t / w.dt));
+    const p = D.frames[cur].p[v.k][i];
+    v.cursor.setAttribute("x1", x(i * w.dt)); v.cursor.setAttribute("x2", x(i * w.dt));
+    v.cursor.setAttribute("visibility", "visible");
+    tip(`<b>${(w.t0 + i * w.dt).toFixed(2)} s</b> into ${w.session}<br>P(foot hits) ${p.toFixed(2)}<br>shin gx ${w.gx[i].toFixed(0)} °/s`, e.clientX, e.clientY);
+  });
+  hit.addEventListener("pointerleave", () => { v.cursor.setAttribute("visibility", "hidden"); hideTip(); });
+}
+
+function drawWindow(v, f) {
+  const { w, x, y } = v;
+  const p = f.p[v.k];
+  v.path.setAttribute("d", p.map((q, i) => `${i ? "L" : "M"}${x(i * w.dt).toFixed(1)},${y(q).toFixed(1)}`).join(""));
+  v.thr.setAttribute("y1", y(f.threshold)); v.thr.setAttribute("y2", y(f.threshold));
+  v.dots.innerHTML = "";
+  for (const s of f.found[v.k]) {
+    const i = Math.min(p.length - 1, Math.round(s / w.dt));
+    el("circle", { cx: x(s), cy: y(p[i]), r: 4.5, fill: "var(--net-phone)", stroke: "var(--surface-1)", "stroke-width": 2 }, v.dots);
+  }
+  $("wh" + v.k).textContent = `${f.found[v.k].length} counted · ${w.taps.length} tapped`;
+}
+
+// ---- Curves over training, with a playhead --------------------------------
+function buildCurve(svg, series, refs, yLabel, tipRow) {
+  const v = { svg, series, refs, yLabel, tipRow };
+  return v;
+}
+function layoutCurve(v) {
+  const { svg, series, refs } = v;
+  const W = svg.clientWidth || 560, H = 210, L = 44, R = 10, B = 26, Tp = 10;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = "";
+  const its = D.frames.map(f => f.it);
+  const X1 = D.iterations;
+  const vals = series.flatMap(s => D.frames.map(s.get).filter(q => q != null)).concat(refs.map(r => r.value));
+  const ymax = niceMax(Math.max(...vals) * 1.05);
+  const x = it => L + it / X1 * (W - L - R);
+  const y = q => H - B - q / ymax * (H - B - Tp);
+  for (const t of ticks(ymax)) {
+    el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), stroke: "var(--grid)" }, svg);
+    el("text", { x: L - 6, y: y(t) + 4, "text-anchor": "end" }, svg).textContent = t >= 1000 ? fmt(t) : +t.toFixed(2);
+  }
+  for (let ep = 0; ep <= X1 / D.iters_per_epoch; ep += 5) {
+    el("text", { x: x(ep * D.iters_per_epoch), y: H - 8, "text-anchor": ep === 0 ? "start" : "middle" }, svg)
+      .textContent = ep === 0 ? "epoch 0" : ep;
+  }
+  for (const r of refs) {
+    el("line", { x1: L, x2: W - R, y1: y(r.value), y2: y(r.value), stroke: r.color, "stroke-width": 1.5, "stroke-dasharray": "5 4" }, svg);
+  }
+  for (const s of series) {
+    const pts = D.frames.map((f, i) => [its[i], s.get(f)]).filter(p => p[1] != null);
+    el("path", { d: pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(""),
+                 fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round" }, svg);
+  }
+  v.head = el("line", { y1: Tp, y2: H - B, stroke: "var(--text-primary)", "stroke-width": 1.5 }, svg);
+  v.marks = series.map(s => el("circle", { r: 4.5, fill: s.color, stroke: "var(--surface-1)", "stroke-width": 2 }, svg));
+  Object.assign(v, { x, y });
+  const hit = el("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent", style: "cursor:pointer" }, svg);
+  const nearest = e => {
+    const r = svg.getBoundingClientRect();
+    const it = (e.clientX - r.left - L) / (r.width - L - R) * X1;
+    let best = 0;
+    for (let i = 1; i < its.length; i++) if (Math.abs(its[i] - it) < Math.abs(its[best] - it)) best = i;
+    return best;
+  };
+  hit.addEventListener("pointermove", e => { const i = nearest(e); tip(v.tipRow(D.frames[i]), e.clientX, e.clientY); });
+  hit.addEventListener("pointerleave", hideTip);
+  hit.addEventListener("click", e => { pause(); show(nearest(e)); });
+}
+function drawCurve(v, f) {
+  const X = v.x(f.it);
+  v.head.setAttribute("x1", X); v.head.setAttribute("x2", X);
+  v.series.forEach((s, i) => {
+    const q = s.get(f);
+    v.marks[i].setAttribute("visibility", q == null ? "hidden" : "visible");
+    if (q != null) { v.marks[i].setAttribute("cx", X); v.marks[i].setAttribute("cy", v.y(q)); }
+  });
+}
+function niceStep(m) {                       // a round step giving about 4 gridlines up to m
+  const raw = m / 4, p = 10 ** Math.floor(Math.log10(raw)), r = raw / p;
+  return (r <= 1 ? 1 : r <= 2 ? 2 : r <= 2.5 ? 2.5 : r <= 5 ? 5 : 10) * p;
+}
+function niceMax(m) { const s = niceStep(m); return Math.ceil(m / s) * s; }
+function ticks(m) { const s = niceStep(m), out = []; for (let t = 0; t <= m + s / 1e6; t += s) out.push(+t.toFixed(6)); return out; }
+
+// ---- Frame ------------------------------------------------------------------
+function show(i) {
+  cur = Math.max(0, Math.min(D.frames.length - 1, i));
+  const f = D.frames[cur];
+  $("scrub").value = cur;
+  $("readout").textContent = `update ${fmt(f.it)} / ${fmt(D.iterations)} · epoch ${f.epoch.toFixed(1)}`;
+  views.forEach(v => drawWindow(v, f));
+  drawCurve(lossView, f); drawCurve(countView, f);
+  const taps = sum(D.sessions.map(s => s.taps)), oldr = sum(D.sessions.map(s => s.old_rule));
+  const ph = sum(f.phone), sh = sum(f.shin);
+  $("stats").innerHTML = [
+    ["Net, shin + phone", "var(--net-phone)", fmt(ph), pct(ph, taps)],
+    ["Net, shin only", "var(--net-shin)", fmt(sh), pct(sh, taps)],
+    ["Last week's rule", "var(--old-rule)", fmt(oldr), pct(oldr, taps)],
+    ["Taps (truth)", "var(--text-primary)", fmt(taps), `${D.sessions.length} sessions`],
+    ["Threshold · held-out loss", null, f.threshold.toFixed(2), `loss ${f.loss_held.toFixed(3)}`],
+  ].map(([k, c, v, s]) => `<div class="card stat"><div class="eyebrow k">${c ? `<i class="swatch" style="background:${c}"></i>` : ""}${k}</div>
+      <div class="v">${v} <small>${s}</small></div></div>`).join("");
+  const rows = D.sessions.map((s, j) => `<tr><td>${NAMES[s.activity] || s.activity}</td><td>${s.taps}</td>
+      <td>${f.phone[j]}</td><td class="err">${pct(f.phone[j], s.taps)}</td>
+      <td>${f.shin[j]}</td><td class="err">${pct(f.shin[j], s.taps)}</td>
+      <td>${s.old_rule}</td><td class="err">${pct(s.old_rule, s.taps)}</td></tr>`).join("");
+  $("table").innerHTML = `<thead><tr><th>Session</th><th>Taps</th><th>Net + phone</th><th>error</th>
+      <th>Net, shin</th><th>error</th><th>Last week</th><th>error</th></tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><td>All</td><td>${taps}</td><td>${ph}</td><td class="err">${pct(ph, taps)}</td>
+      <td>${sh}</td><td class="err">${pct(sh, taps)}</td><td>${oldr}</td><td class="err">${pct(oldr, taps)}</td></tr></tfoot>`;
+}
+
+function tick(now) {
+  if (!playing) return;
+  acc += (now - last) / 1000 * FPS * +$("speed").value;
+  last = now;
+  if (acc >= 1) {
+    const step = Math.floor(acc); acc -= step;
+    if (cur + step >= D.frames.length - 1) { show(D.frames.length - 1); pause(); return; }
+    show(cur + step);
+  }
+  requestAnimationFrame(tick);
+}
+function play() {
+  if (cur >= D.frames.length - 1) show(0);
+  playing = true; acc = 0; last = performance.now();
+  $("play").textContent = "Pause"; $("play").setAttribute("aria-label", "Pause");
+  requestAnimationFrame(tick);
+}
+function pause() { playing = false; $("play").textContent = cur >= D.frames.length - 1 ? "Replay" : "Play"; $("play").setAttribute("aria-label", $("play").textContent); }
+
+function layoutAll() { views.forEach(layoutWindow); layoutCurve(lossView); layoutCurve(countView); show(cur); }
+
+async function main() {
+  try {
+    const r = await fetch("figures/steps_timelapse.json");
+    if (!r.ok) throw new Error(r.status);
+    D = await r.json();
+  } catch {
+    $("sub").textContent = "Couldn't load the training run.";
+    $("msg").innerHTML = `Make it with <code>python ActivityWearable/timelapse_steps.py</code>, then open this page through a
+      web server (<code>cd ActivityWearable && python -m http.server 8000</code>, then
+      <code>http://localhost:8000/timelapse.html</code>): browsers don't let a page opened as a file load its data.`;
+    return;
+  }
+  $("sub").innerHTML = `Held out: <b>${D.person}</b>. Trained on ${D.trained_on.join(", ")}; it never sees ${D.person}'s
+    recordings. ${fmt(D.iterations)} updates of ${D.batch} four-second clips (${D.iterations / D.iters_per_epoch} epochs),
+    ${D.frames.length} snapshots.`;
+  for (const id of ["player", "stats", "curves", "table-card", "foot"]) $(id).hidden = false;
+  D.windows.forEach(buildWindow);
+  const taps = sum(D.sessions.map(s => s.taps)), oldr = sum(D.sessions.map(s => s.old_rule));
+  lossView = buildCurve($("loss"),
+    [{ get: f => f.loss_train, color: "var(--text-muted)", width: 1.5 }, { get: f => f.loss_held, color: "var(--net-phone)" }],
+    [], "loss",
+    f => `<b>update ${fmt(f.it)}</b> (epoch ${f.epoch.toFixed(1)})<br>training clips ${f.loss_train == null ? "–" : f.loss_train.toFixed(3)}<br>held out ${f.loss_held.toFixed(3)}<br>learning rate ${f.lr.toExponential(1)}`);
+  countView = buildCurve($("count"),
+    [{ get: f => sum(f.shin), color: "var(--net-shin)" }, { get: f => sum(f.phone), color: "var(--net-phone)" }],
+    [{ value: oldr, color: "var(--old-rule)" }, { value: taps, color: "var(--text-primary)" }], "steps",
+    f => `<b>update ${fmt(f.it)}</b><br>net + phone ${fmt(sum(f.phone))} (${pct(sum(f.phone), taps)})<br>net, shin ${fmt(sum(f.shin))} (${pct(sum(f.shin), taps)})<br>taps ${fmt(taps)} · last week ${fmt(oldr)}`);
+  $("scrub").max = D.frames.length - 1;
+  cur = D.frames.length - 1;          // at rest: the trained net
+  layoutAll();
+  pause();
+  $("play").onclick = () => playing ? pause() : play();
+  $("scrub").oninput = e => { pause(); show(+e.target.value); };
+  addEventListener("keydown", e => {
+    if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+    if (e.key === " ") { e.preventDefault(); playing ? pause() : play(); }
+    if (e.key === "ArrowRight") { pause(); show(cur + 1); }
+    if (e.key === "ArrowLeft") { pause(); show(cur - 1); }
+  });
+  let rt;
+  new ResizeObserver(() => { clearTimeout(rt); rt = setTimeout(layoutAll, 100); }).observe($("windows"));
+}
+main();
+</script>
+</body>
+</html>

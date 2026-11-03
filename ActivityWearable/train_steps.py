@@ -11,12 +11,15 @@ The network (inputs and forward pass in steps.py, shared with the board):
 phone in the left pocket) -> 4 dilated 1D convolutions (ReLU between) -> the
 probability that a foot hit the ground at that sample. It's trained to output
 a narrow bump at every tap. Steps = peaks above a threshold, >= 0.2 s apart.
+The threshold is picked on the held-out folds' output (people the net hadn't
+seen), not on the net's own training data.
 
 Training randomly drops the phone (so it still counts when there isn't one),
 tilts the shin sensor a little, stretches time (cadence) and scales the
 amplitude (other people move differently).
 
-Compared, on people the network never saw:
+Compared, on people the network never saw (leaving out, for all three, the
+steps in each recording's first and last 1.1 s, which the net can't reach):
 - the net with the phone
 - the net with the shin only (the phone hidden)
 - last week's rule (main.py before 2026-11-02): one stride per forward swing
@@ -64,8 +67,7 @@ NET_REACH = (KERNEL - 1) * sum(DILATIONS) // 2          # 60 samples each side
 SIGMA = 4                # samples: width of the bump trained at each tap
 MIN_GAP = 20             # samples: steps at least 0.2 s apart (5 a second is a sprint)
 TOL = 15                 # samples: a found step within 150 ms of a tap counts as that tap
-STRIKE_G = 2.0           # a right heel strike = a peak in the shin's |a| above this, the biggest within 0.3 s
-MATCH = 25               # samples: a right-foot tap within 250 ms of a heel strike is matched to it
+MIN_TAPS_TO_ALIGN = 6   # right-foot taps needed to line a session's taps up with its strides
 
 # Training
 CROP = 400               # rows of inputs per training example (4 s)
@@ -95,6 +97,8 @@ def read_csv(path, cols):
     """Numeric columns of a session-style CSV (comment lines start with #)."""
     with open(path) as f:
         rows = [line.strip().split(",") for line in f if line.strip() and not line.startswith("#")]
+    if not rows:
+        return []
     head, body = rows[0], rows[1:]
     idx = [head.index(c) if isinstance(c, str) else c for c in cols]
     return [[r[i].strip() for i in idx] for r in body]
@@ -108,6 +112,9 @@ def load(data_dir):
             continue
         taps_path = data_dir / f"{r['session']}_taps.csv"
         shin = np.array(read_csv(path, list(range(1, 7))), dtype=float)
+        if len(shin) < 5 * S.RATE_HZ:
+            print(f"  {r['session']}: only {len(shin)} samples (skipped)")
+            continue
         shift = None
         if taps_path.exists():
             loaded = load_taps(taps_path, path)
@@ -115,8 +122,6 @@ def load(data_dir):
                 continue
             taps, feet = loaded
             shift = tap_offset(taps, feet, shin)
-            if shift is not None:
-                taps = taps - shift
         elif r["label"] in ("still", "bike"):
             taps = np.zeros(0)               # zero-step session from before tap mode
         else:
@@ -128,32 +133,48 @@ def load(data_dir):
         sessions.append({
             "name": r["session"], "person": r["person"], "label": r["label"], "activity": r["activity"],
             "shin": shin, "phone": phone, "on": on, "taps": np.sort(taps), "has_phone": bool(on.any()),
-            "X": X, "X_shin": S.inputs(shin, phone, np.zeros(len(shin), dtype=bool)),
-            "y": bumps(taps, len(X)), "tap_shift": None if shift is None else round(shift * 10),
+            "X": X, "X_shin": S.inputs(shin, phone, np.zeros(len(shin), dtype=bool)), "offset": shift,
         })
+    offsets = [s["offset"] for s in sessions if s["offset"] is not None]
+    ref = float(np.median(offsets)) if offsets else 0.0
+    for s in sessions:
+        shift = s["offset"] - ref if s["offset"] is not None else 0.0
+        s["taps"] = s["taps"] - shift
+        s["tap_shift"] = round(shift * 10) if s["offset"] is not None else None
+        s["y"] = bumps(s["taps"], len(s["X"]))
+        s["taps_seen"] = s["taps"][seen(s["taps"], len(s["shin"]))]
+    if offsets:
+        print(f"  taps lined up with the strides: {len(offsets)} sessions, shifts "
+              + ", ".join(f"{s['tap_shift']:+d}" for s in sessions if s["tap_shift"] is not None) + " ms")
     return sessions
 
 
-def heel_strikes(shin):
-    amag = np.linalg.norm(shin[:, :3], axis=1)
-    pad = np.concatenate([np.zeros(30), amag, np.zeros(30)])
-    win = np.lib.stride_tricks.sliding_window_view(pad, 61)
-    return np.flatnonzero((np.argmax(win, axis=1) == 30) & (amag > STRIKE_G))
+def seen(at, n):
+    """Which of these sample times the net can count in an n-sample recording:
+    its output starts CTX + NET_REACH samples in (1.1 s) and stops as far from
+    the end. Live, the stream doesn't have edges, so the comparison and the
+    threshold use only the steps in this span, for every method. (Counting the
+    whole recording left ~5% of the taps out of the net's reach, 2026-11-03.)"""
+    edge = S.CTX + NET_REACH
+    at = np.asarray(at)
+    return (at >= edge) & (at < n - edge)
 
 
 def tap_offset(taps, feet, shin):
-    """How far the right-foot taps sit from the right shin's heel strikes
-    (median, in samples), or None if fewer than 6 match. The laptop's estimate
-    of the board's clock varies by ~0.1 s between sessions (2026-11-02: -138
-    vs -7 ms), so each session's taps are shifted by this to sit on its heel
-    strikes; the left-foot taps share the same clock and move with them."""
-    strikes = heel_strikes(shin)
+    """Median time (samples) from the shin's forward swing (the old rule's
+    stride marker, once per stride) to the nearest right-foot tap, or None if
+    too few taps. The laptop's estimate of the board's clock varies by a few
+    hundred ms between sessions (2026-11-02), so load() shifts each session's
+    taps by its offset minus the median over all sessions: every session's
+    right-foot taps then sit at the same point in the stride, and the
+    left-foot taps (same clock) move with them. (Heel strikes as |a| peaks
+    were tried first, but walking gives two peaks per stride, which made the
+    offsets flip between them.)"""
+    swings = old_rule(shin)
     right = taps[feet == "right"]
-    if len(strikes) == 0 or len(right) == 0:
+    if len(swings) < 3 or len(right) < MIN_TAPS_TO_ALIGN:
         return None
-    off = np.array([t - strikes[np.argmin(np.abs(strikes - t))] for t in right])
-    off = off[np.abs(off) <= MATCH]
-    return float(np.median(off)) if len(off) >= 6 else None
+    return float(np.median([t - swings[np.argmin(np.abs(swings - t))] for t in right]))
 
 
 def load_taps(taps_path, session_path):
@@ -238,7 +259,10 @@ def example(s, rng):
     return X.astype(np.float32), y[NET_REACH:CROP - NET_REACH].astype(np.float32)
 
 
-def train(sessions, seed=0, epochs=EPOCHS):
+def train(sessions, seed=0, epochs=EPOCHS, snapshot=None):
+    """snapshot(net, iteration, loss, lr), if given, is called before the
+    first update and after every one (timelapse_steps.py records the training
+    with it)."""
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     usable = [s for s in sessions if len(s["X"]) > CROP * 1.2 + 10]
@@ -247,8 +271,10 @@ def train(sessions, seed=0, epochs=EPOCHS):
     net = make_net()
     opt = torch.optim.Adam(net.parameters(), lr=LR)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs * ITERS)
-    for _ in range(epochs):
-        for _ in range(ITERS):
+    if snapshot:
+        snapshot(net, 0, None, LR)
+    for epoch in range(epochs):
+        for it in range(ITERS):
             xs, ys = zip(*(example(usable[i], rng) for i in rng.choice(len(usable), BATCH, p=weights)))
             x = torch.from_numpy(np.stack(xs)).transpose(1, 2)
             y = torch.from_numpy(np.stack(ys))
@@ -257,6 +283,8 @@ def train(sessions, seed=0, epochs=EPOCHS):
             loss.backward()
             opt.step()
             sched.step()
+            if snapshot:
+                snapshot(net, epoch * ITERS + it + 1, loss.item(), sched.get_last_lr()[0])
     return net
 
 
@@ -297,22 +325,27 @@ def match(found_at, taps):
     return hits, (2 * hits / denom if denom else 1.0)
 
 
-def tune_threshold(net_spec, sessions):
-    """The threshold that gets the training sessions' totals closest, with and without the phone."""
-    probs = [(probabilities(net_spec, s[k]), len(s["taps"])) for s in sessions for k in ("X", "X_shin")]
-    err = [sum(abs(len(S.pick_peaks(p, t, MIN_GAP)) - n) for p, n in probs) for t in THRESHOLDS]
+def tune_threshold(held):
+    """The threshold that gets these sessions' totals closest, with and without
+    the phone. held: (p with the phone, p shin only, taps the net can see) per
+    session, each from a net that never trained on that session's person. (A
+    threshold tuned on the net's own training sessions came out high, 0.60 on
+    every fold: the net is surer of people it has seen, and missed steps on
+    new ones, 2026-11-03.)"""
+    err = [sum(abs(len(S.pick_peaks(p, t, MIN_GAP)) - n) for pp, ps, n in held for p in (pp, ps)) for t in THRESHOLDS]
     return float(THRESHOLDS[int(np.argmin(err))])
 
 
-def evaluate(spec, s):
+def evaluate(s, p_phone, p_shin, threshold):
     row = {"session": s["name"], "person": s["person"], "label": s["label"], "activity": s["activity"],
-           "seconds": round(len(s["shin"]) / S.RATE_HZ, 1), "taps": len(s["taps"]), "has_phone": s["has_phone"],
-           "tap_shift_ms": s["tap_shift"]}
-    for key, X in (("net_phone", s["X"]), ("net_shin", s["X_shin"])):
-        at, _ = found(spec, X)
+           "seconds": round(len(s["shin"]) / S.RATE_HZ, 1), "taps": len(s["taps_seen"]), "taps_all": len(s["taps"]),
+           "has_phone": s["has_phone"], "tap_shift_ms": s["tap_shift"]}
+    for key, p in (("net_phone", p_phone), ("net_shin", p_shin)):
+        at = np.array(S.pick_peaks(p, threshold, MIN_GAP), dtype=int) + S.CTX + NET_REACH
         row[key] = len(at)
-        row[key + "_f1"] = round(match(at, s["taps"])[1], 3)
-    row["old_rule"] = 2 * len(old_rule(s["shin"]))
+        row[key + "_f1"] = round(match(at, s["taps_seen"])[1], 3)
+    strides = old_rule(s["shin"])
+    row["old_rule"] = 2 * int(seen(strides, len(s["shin"])).sum())
     return row
 
 
@@ -363,11 +396,14 @@ def check_live_matches_offline(spec, sessions, latency=15):
     """Feed sessions through the board's StepCounter in 7-sample batches, the
     phone arriving `latency` samples late, and compare with counting each
     whole recording at once (ignoring the last couple of seconds, which the
-    live counter hasn't decided yet)."""
+    live counter hasn't decided yet). Uses sessions with the phone there
+    throughout: where the phone drops out, the board stops waiting for it
+    after 1 s (main.py), so right after a gap the live count can differ."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(spec, f)
-    checked = 0
-    for s in [x for x in sessions if x["has_phone"]][:3] + [x for x in sessions if not x["has_phone"]][:1]:
+    checked, worst = 0, 0
+    full =[x for x in sessions if x["has_phone"] and x["on"].mean() > 0.99 and len(x["taps"])]
+    for s in full[:3] + [x for x in sessions if not x["has_phone"]][:1]:
         offline, _ = found(spec, s["X"] if s["has_phone"] else s["X_shin"])
         counter, live = S.StepCounter(f.name), []
         ph_t = np.flatnonzero(s["on"]).astype(float) if s["has_phone"] else np.zeros(0)
@@ -383,10 +419,15 @@ def check_live_matches_offline(spec, sessions, latency=15):
             live += counter.update(ready)
         cut = len(s["shin"]) - 3 * S.RATE_HZ
         a, b = [x for x in offline if x < cut], [x for x in live if x < cut]
-        assert a == b, f"live StepCounter differs on {s['name']}: {len(a)} vs {len(b)} steps"
+        # Chunked and whole-recording float32 sums differ in the last bit, which
+        # can move a peak by a sample when two neighbours are nearly equal.
+        assert len(a) == len(b), f"live StepCounter differs on {s['name']}: {len(a)} vs {len(b)} steps"
+        moved = max((abs(x - y) for x, y in zip(a, b)), default=0)
+        assert moved <= 2, f"live StepCounter differs on {s['name']}: a step moved {moved} samples"
+        worst = max(worst, moved)
         checked += 1
     Path(f.name).unlink()
-    print(f"  live StepCounter = whole-recording count on {checked} sessions")
+    print(f"  live StepCounter = whole-recording count on {checked} sessions (same steps, within {worst} samples)")
     return checked
 
 
@@ -401,7 +442,8 @@ def fig_example(spec_by_person, sessions, out):
     spec = spec_by_person[s["person"]]
     at, p = found(spec, s["X"])
     t_p = (np.arange(len(p)) + S.CTX + NET_REACH) / S.RATE_HZ
-    a0 = max(0.0, s["taps"][0] / S.RATE_HZ - 0.5) if len(s["taps"]) else 3.0
+    edge = (S.CTX + NET_REACH) / S.RATE_HZ                # the net counts from here (see seen())
+    a0 = max(edge, s["taps"][0] / S.RATE_HZ - 0.5) if len(s["taps"]) else 3.0
     a1 = a0 + 8
     t = np.arange(len(s["shin"])) / S.RATE_HZ
     win = (t >= a0) & (t <= a1)
@@ -526,37 +568,47 @@ def main():
           f"{sum(len(s['taps']) for s in sessions)} taps, people: {', '.join(sorted({s['person'] for s in sessions}))}")
 
     how, plan = folds(sessions)
-    rows, spec_by_person = [], {}
-    for held, train_set, test_set in plan:
-        net = train(train_set, epochs=args.epochs)
-        spec = export(net, 0.5)
-        spec["threshold"] = tune_threshold(spec, train_set)
+    nets, held = {}, {}          # fold -> net; session -> (p with phone, p shin only, taps the net can see)
+    for name, train_set, test_set in plan:
+        nets[name] = export(train(train_set, epochs=args.epochs), 0.5)
+        for s in test_set:
+            held[s["name"]] = (probabilities(nets[name], s["X"]), probabilities(nets[name], s["X_shin"]),
+                               len(s["taps_seen"]))
+        print(f"  {name}: trained", flush=True)
+    # Each fold's threshold comes from the other folds' held-out output, so it's
+    # picked on people that fold's net never saw, without using the person it's tested on.
+    rows, spec_by_person, thresholds = [], {}, {}
+    for name, _, test_set in plan:
+        mine = {s["name"] for s in test_set}
+        spec = dict(nets[name], threshold=tune_threshold([v for k, v in held.items() if k not in mine]))
+        thresholds[name] = spec["threshold"]
         for s in test_set:
             spec_by_person[s["person"]] = spec
-            rows.append(evaluate(spec, s))
-        r = [x for x in rows if x["session"] in {s["name"] for s in test_set} and x["taps"] >= 10]
-        print(f"  {held}: threshold {spec['threshold']:.2f}; " + ", ".join(
+            rows.append(evaluate(s, held[s["name"]][0], held[s["name"]][1], spec["threshold"]))
+        r = [x for x in rows if x["session"] in mine and x["taps"] >= 10]
+        print(f"  {name}: threshold {spec['threshold']:.2f}; " + ", ".join(
             f"{k} {sum(x[k] for x in r)}" for k in METHODS) + f" vs {sum(x['taps'] for x in r)} taps")
     summary = summarise(rows)
 
     print("final net, trained on everyone")
     net = train(sessions, epochs=args.epochs)
     spec = export(net, 0.5)
-    spec["threshold"] = tune_threshold(spec, sessions)
-    diff = check_numpy_matches_torch(net, spec, sessions)
-    checked = check_live_matches_offline(spec, sessions)
+    spec["threshold"] = tune_threshold(list(held.values()))     # what worked on people the nets hadn't seen
     spec["summary"] = {"trained": date.today().isoformat(), "people": sorted({s["person"] for s in sessions}),
                        "sessions": len(sessions), "taps": int(sum(len(s["taps"]) for s in sessions)),
                        "evaluation": how,
                        "count_err_pct": summary["net_phone"]["median_abs_err_pct"],
                        "count_err_pct_shin_only": summary["net_shin"]["median_abs_err_pct"]}
-    model_json.write_text(json.dumps(spec))
+    model_json.write_text(json.dumps(spec))           # saved before the checks, so a failed check keeps the net
+    diff = check_numpy_matches_torch(net, spec, sessions)
+    checked = check_live_matches_offline(spec, sessions)
 
     fig_example(spec_by_person, sessions, fig_dir)
     fig_comparison(rows, fig_dir)
     fig_network(spec, fig_dir)
     (fig_dir / "steps_results.json").write_text(json.dumps({
         "evaluation": how, "summary": summary, "sessions": rows, "final_threshold": spec["threshold"],
+        "fold_thresholds": thresholds,
         "checks": {"numpy_vs_torch_max_diff": diff, "live_equals_offline_sessions": checked},
         "settings": {"width": WIDTH, "kernel": KERNEL, "dilations": DILATIONS, "sigma": SIGMA, "min_gap": MIN_GAP,
                      "tolerance": TOL, "crop": CROP, "epochs": args.epochs, "p_no_phone": P_NO_PHONE},

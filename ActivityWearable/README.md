@@ -243,23 +243,43 @@ The board times each session itself and saves it to `data/` in its app folder, s
 - 12 channels → 4 dilated 1D convolutions (9 taps each, spaced 1, 2, 4, 8 samples apart, 16 channels, ReLU) → 1 output: the probability that a foot hit the ground at that sample. About 8.7k weights. Each output sees 0.6 s either side (1.1 s with the phone's gravity average), so steps come out about 1.3 s late.
 - Trained to output a narrow bump (σ = 40 ms) at every tap; loss = binary cross-entropy, weighted up near taps. Adam, 25 epochs × 100 batches of 64 random 4 s crops.
 - Augmentation: the phone hidden 30% of the time (so it still counts without one), the shin sensor tilted up to 10°, time stretched ±10% (cadence), amplitudes ±15%, the phone's clock shifted ±50 ms, noise.
-- Steps = peaks above a threshold, ≥ 0.2 s apart. The threshold is picked on the training people only (closest totals, with and without the phone).
+- Steps = peaks above a threshold, ≥ 0.2 s apart. The threshold is picked on people the net hadn't seen: the folds' held-out output (closest totals, with and without the phone). Each fold's own threshold comes from the *other* folds, so the person it's tested on plays no part in it. The board's net uses the best one over all of them (0.50).
 - Evaluated leave one person out, like last week: count error per session, false steps per minute in zero-step sessions, and F1 of found steps vs taps (within 150 ms). Three ways: the net with the phone, the net with the shin only, and last week's rule × 2.
+- Everything is compared on the part of each recording the net can count: its output starts 1.1 s in and stops 1.1 s before the end (it needs context either side). Live, the stream has no edges. Counting the whole recording put 110 of the 2110 taps out of the net's reach.
 
 **On the board:** `main.py` feeds every shin and phone sample to `steps.StepCounter`, which runs the exported net (`python/steps_model.json`) in numpy every 0.25 s. "Trained in PyTorch, run in numpy": training is where PyTorch is needed; running the net is just its multiplications, so the board doesn't need the big PyTorch install. `train_steps.py` checks the numpy version matches PyTorch and that the live counter finds exactly the steps that counting a whole recording at once does.
 
-**Checked so far** (no tap-mode data exists yet, so on stand-ins):
-- **Pipeline test on synthetic data** (in a scratch folder, not in `data/`): week 1's 27 sessions with fake taps (the old rule's strides plus midpoints) and a fake phone (the shin signal shifted half a stride and randomly rotated, at 60 Hz with jitter). `train_steps.py` ran end to end; numpy vs PyTorch differed by at most 5e-10; the live `StepCounter` matched the whole-recording count exactly on 3 sessions. The accuracy numbers from fake taps mean nothing (the taps *were* the old rule). One real number: on week 1's zero-step sessions, the old rule counted 115 steps a minute while air-biking.
-- **Board app in a simulation:** the real `main.py` with a fake Bridge (replaying a recorded walk at 100 Hz), fake MQTT, the phone stream delivered 80 ms late and a simulated clock: counted 76 steps vs 79 fake taps, recorded a 15 s session with 898/900 phone samples in `_phone.csv`, phone status 60 Hz.
-- **Phone page and dashboard** screenshotted in headless Chrome (390 px wide; dashboard `?demo`). The phone page hasn't run on an iPhone yet.
-- Not yet: the app on the real board, the phone page on a real iPhone, real tap data, a trained net.
+**Results (2026-11-03): 6 people, held out.** 70 sessions: 37 tapped (2110 taps) from BANJO, DHRUV, MAYA, RUBYA and SL, plus zero-step ones (TEOROM and week 1's still and bike sessions). Every phone session had the phone.
+
+| | count error, median per session | total error | false steps / min, air-biking | F1 (steps within 150 ms of a tap) |
+|---|---|---|---|---|
+| **Net, shin + phone** | **2.0%** | 4.3% | **0.35** | 0.94 |
+| Net, shin only | 2.9% | 4.2% | 0.35 | 0.94 |
+| Last week's rule × 2 | 2.6% | 3.3% | 106 | – |
+
+- By activity (median per session, net + phone vs the rule): walking 1.5% vs 1.6%, stop-start/counted walks 3.3% vs 6.7%, running 1.3% vs 2.1%. Standing: 0 false steps for all three.
+- The net's real win is what *isn't* a step: the rule counts every pedal turn as a stride.
+- The phone helps most on walks (3.0% → 1.5% median).
+- Per person (net + phone vs taps): BANJO +1.1%, DHRUV −8.5%, MAYA +5.9%, RUBYA +1.1%, SL +1.4%. All together: 2006 steps vs 2000 taps (the rule: 2010).
+- **Where it misses:** gaits unlike the training people's. BANJO's stop-start walk was slow, short shuffling steps with no real stops (shin swings −100 to −200 °/s; DHRUV's are −300), and the first half of BANJO's stairs was similar. The data itself is clean (0 gaps, 0 drops, no flat or zeroed stretches), so it isn't the wiring. More varied training data (slow, short steps) is the fix.
+- **Two corrections on the way** (2026-11-03), worth keeping in mind:
+  - Counting whole recordings made the net look 5% short: the taps in each recording's first and last 1.1 s are outside its output. Fixed by comparing all three methods on the same span.
+  - A threshold tuned on the net's own training people came out 0.60 on every fold: the net is surer of people it has seen, so it missed steps on new ones (DHRUV 308 vs 375 taps). Picking it on held-out output gives 0.45–0.50 and the numbers above.
+- Checks: numpy vs PyTorch 6.9e-09; the live `StepCounter` finds the same steps as the whole-recording count (within 1 sample) on 4 sessions.
+
+**Before the real data** (2026-11-02): a synthetic pipeline test (fake taps from the old rule, a fake phone from the shifted shin signal), the real `main.py` in a simulation (fake Bridge and MQTT, simulated clock), and headless-Chrome screenshots of the phone page and dashboard. They checked the plumbing, not the accuracy.
+
+**Training timelapse** (`timelapse_steps.py` → `figures/steps_timelapse.json`, played by `timelapse.html`): re-trains BANJO's fold exactly as `train_steps.py` does (same seed and sessions) and snapshots it 283 times over its 2500 updates, densely at first. Each snapshot has both losses (augmented training clips and BANJO's real recordings), the steps it counts on each of BANJO's sessions, and its output over 8 s of four of them (walk, stairs, fast run, air-bike). The last frame equals BANJO's line in `train_steps.py`'s output (372 steps vs 368 taps).
+- One finding from it: BANJO's held-out loss is lowest around update 250 and drifts up after, while the training loss keeps falling and the count barely changes. The net gets more confident in peak shapes it learned from the five others, without counting a new person any better.
+- Open it at <https://sl-ter.github.io/me193/ActivityWearable/timelapse.html>, or locally with `cd ActivityWearable && python -m http.server 8000` → <http://localhost:8000/timelapse.html> (browsers won't load its data from a file opened directly).
 
 **Run it:**
 ```bash
 source venv/bin/activate
 python ActivityWearable/record.py --person SL        # step protocol, tap mode
 UNOQ_HOST=<ip> python ActivityWearable/pull_data.py  # sessions + _phone.csv files
-python ActivityWearable/train_steps.py               # ~3 min per person on a laptop CPU
+python ActivityWearable/train_steps.py               # ~3 min per person on a laptop CPU (~25 min for 6)
+python ActivityWearable/timelapse_steps.py           # after train_steps.py: the timelapse's data, ~5 min
 UNOQ_HOST=<ip> python3 tools/deploy.py ActivityWearable/unoq/activity-wearable   # ships steps_model.json
 ```
 torch 2.14.1 is now in the root `requirements.txt`.
@@ -269,7 +289,8 @@ torch 2.14.1 is now in the root `requirements.txt`.
 | `steps_example.png` | a held-out walk: shin gx, phone swing, the net's output with the taps and the steps it found, and the old rule's strides |
 | `steps_comparison.png` | count error per activity and false steps per minute when still or biking: net + phone vs net, shin only vs the old rule |
 | `steps_network.png` | the network as a diagram |
-| `steps_results.json` | every number, per session |
+| `steps_results.json` | every number, per session, and each fold's threshold |
+| `steps_timelapse.json` | the timelapse's snapshots (for `timelapse.html`) |
 
 ## Network notes (2026-10-26)
 
@@ -349,6 +370,8 @@ Results, 2026-10-26: 1569 windows from SL, TEOROM and MAYA.
 | `common.py` | broker/topic settings, data paths, both recording protocols (`STEP_PROTOCOL`, `PROTOCOL`) |
 | `record.py` | guided recording session (laptop), with tap mode for step sessions |
 | `train_steps.py` | the step net: PyTorch training, leave-one-person-out comparison with the old rule, figures, `steps_model.json` |
+| `timelapse_steps.py` | records one fold of the step net's training, snapshot by snapshot |
+| `timelapse.html` | plays that back: the net's output, losses and counts over training |
 | `phone/index.html` | the phone page (GitHub Pages), streams the iPhone's motion over MQTT |
 | `pull_data.py` | copies sessions off the board into `data/` |
 | `train.py` | windows, leave-one-person-out evaluation, figures, `models.json` |

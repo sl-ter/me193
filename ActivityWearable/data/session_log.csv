@@ -33,3 +33,6 @@ MAYA_bike_fast_20261026-171717,MAYA,right,bike_fast,bike,30,3000,0,True,kept,202
 SL_calib_stand_20261102-180615,SL,right,calib_stand,still,10,1000,0,True,kept,2026-11-02T18:06:35
 SL_walk_normal_20261102-182117,SL,right,walk_normal,walk,40,4000,0,True,kept,2026-11-02T18:22:19
 SL_walk_normal_20261102-182248,SL,right,walk_normal,walk,40,,,False,discarded,2026-11-02T18:23:49
+SL_walk_counted_20261102-191008,SL,right,walk_counted,mixed,30,3000,0,False,discarded,2026-11-02T19:11:01
+SL_walk_counted_20261102-191106,SL,right,walk_counted,mixed,30,,,False,discarded,2026-11-02T19:11:53
+SL_walk_counted_20261102-191154,SL,right,walk_counted,mixed,30,,,False,kept,2026-11-02T19:13:27

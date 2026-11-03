@@ -332,8 +332,10 @@ class Session:
             if os.path.exists(self.path[:-4] + "_phone.csv"):
                 os.replace(self.path[:-4] + "_phone.csv", self.path[:-4] + "_phone_aborted.csv")
             stats["file"] = os.path.basename(self.path[:-4] + "_aborted.csv")
-        publish("event", {"type": "aborted" if aborted else "saved", **stats}, qos=1)
+        result = {"type": "aborted" if aborted else "saved", **stats}
+        publish("event", result, qos=1)
         print(("aborted " if aborted else "saved ") + json.dumps(stats), flush=True)
+        return result
 
 
 # ---- Phone ------------------------------------------------------------------
@@ -512,6 +514,9 @@ live_model = None
 # ---- Main loop --------------------------------------------------------------
 session = None
 recent_sessions = deque(maxlen=20)   # names already started, so a repeated record command is ignored
+# The last session's saved/aborted result, repeated in every status message: the
+# one-off event can be lost while the laptop's Wi-Fi blips (it's walking too).
+last_result = None
 imu_state = "?"
 drops = errors = 0
 live = []                      # samples waiting to go out on .../imu
@@ -541,7 +546,7 @@ def drain():
 
 
 def handle_command(cmd, now):
-    global session
+    global session, last_result
     kind = cmd.get("cmd")
     if kind == "record":
         # record.py resends the command until it hears back, and QoS 1 can
@@ -556,9 +561,10 @@ def handle_command(cmd, now):
         print(f"countdown for {session.name}", flush=True)
     elif kind == "stop" and session is not None:
         if session.state == "recording":
-            session.finish(drops, aborted=True)
+            last_result = session.finish(drops, aborted=True)
         else:
-            publish("event", {"type": "aborted", "session": session.name, "rows": 0}, qos=1)
+            last_result = {"type": "aborted", "session": session.name, "rows": 0}
+            publish("event", last_result, qos=1)
         session = None
     elif kind == "ping":
         publish_status(now)
@@ -583,6 +589,7 @@ def publish_status(now):
         "model2_kind": live_model.kind if live_model else None,
         "model2_kinds": list(live_model.models.m["model2"]) if live_model and live_model.models else [],
         "phone": phone.status(now, anchor[1] if anchor else None),
+        "last": last_result,
     })
 
 
@@ -605,7 +612,7 @@ def update_matrix(now):
 
 
 def loop():
-    global session, imu_state, last_live, last_status, last_imu_check, saved_until, started, live_model, anchor
+    global session, imu_state, last_live, last_status, last_imu_check, saved_until, started, live_model, anchor, last_result
     now = time.time()
     if live_model is None:
         live_model = Live()
@@ -661,7 +668,7 @@ def loop():
             full = any(session.add(seq, v) for seq, v in samples)
             stalled = now - session.t_record > session.seconds + 5   # no samples arriving (IMU lost?)
             if full or stalled:
-                session.finish(drops)
+                last_result = session.finish(drops)
                 session = None
                 saved_until = now + SAVED_SHOW_S
 

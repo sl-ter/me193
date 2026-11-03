@@ -720,3 +720,9 @@ real bugs plus a round of feature requests.
 - `train_steps.py` now shifts each session's taps so the right-foot taps sit on the right heel strikes (median, if at least 6 match within 250 ms). The left-foot taps move with them. The shift is reported as `tap_shift_ms`.
 - `record.py`'s results screen now shows the same check: % of right taps matched, the offset, and the spread. It flags a spread over 120 ms or under 70% matched.
 - The board survived a Wi-Fi drop mid-session with the fixes: 4000/4000 rows, 0 drops.
+
+## Activity wearable: no more waiting at the end of a session — 2026-11-02
+
+- `record.py` sometimes sat 10 s past a session's end (25 s after an x abort). The live samples kept arriving, but the single saved/aborted event was lost. The laptop walks too, so its Wi-Fi blips, and a QoS 1 message published while a clean-session subscriber is away is gone.
+- Fix: the board repeats its last result (`last`) in every status message (twice a second), and `record.py` takes it from there. The unconfirmed wait is cut from 10 s to 6 s.
+- Tested with the fake board: events lost, status has the result → done in 4.5 s (was 14 s). Deployed (board idle first).

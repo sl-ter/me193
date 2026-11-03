@@ -526,7 +526,7 @@ class Recorder:
                 key = self.keys.get(0)
             if key == "x":
                 b.send({"cmd": "stop"})
-            if left < -10 and stats is None:
+            if left < -6 and stats is None:
                 return self.unconfirmed(i, name, step, taps)
 
         live_rows = list(b.capture or [])
@@ -561,6 +561,9 @@ class Recorder:
         saved/aborted event, an error message (str), or None."""
         b, out = self.board, None
         st = b.status if b.online() else {}
+        last = st.get("last") or {}
+        if last.get("session") == name and last.get("type") in ("saved", "aborted"):
+            out = last          # the board repeats its last result in every status, in case the event was lost
         if st.get("session") == name:
             self.heard = True
             if st.get("state") == "recording" and st.get("remaining") is not None:

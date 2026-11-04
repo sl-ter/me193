@@ -166,7 +166,7 @@ The board times each session itself and saves it to `data/` in its app folder, s
 | Banner | whether the models agree. When Model 1 says still and Model 2 says bike, it explains why one number can't tell them apart |
 | Timeline | the last 60 s of answers, Model 1 and Model 2 |
 | Signal chart | the raw +Y acceleration for the last 5 s, with the thresholds drawn on it |
-| How far | the current stretch of activity: the step net's steps and a distance range for walk/run, duration for bike and still; the last 5 stretches; height and calibration controls |
+| How far | the current stretch of activity: the step net's steps and a distance range for walk/run, duration for bike and still; how sure the net is (below); the last 5 stretches; height and calibration controls |
 | Header | board rate, and whether the phone is streaming |
 
 **Checked:**
@@ -181,6 +181,11 @@ The board times each session itself and saves it to `data/` in its app folder, s
 **Stretches:** a stretch ("bout") is a run of the same Model 2 answer.
 - It ends only when a different answer holds for 2 answers in a row (1 s), so a flicker at a hallway turnaround doesn't split a walk.
 - `.../live` carries the current stretch (label, duration, steps), `steps_total`, `step_rate_spm`, and the last 6 stretches. `.../bout` gets each one as it ends.
+
+**How sure the net is (dashboard, walk/run):** each counted step is a peak in the net's output, and how far the peak clears the threshold says how sure it was.
+- **Unsure:** a counted step peaking under threshold + 0.2 (`steps.UNSURE_MARGIN`). **Near miss:** a peak just under the threshold (within 0.05, `NEAR_MARGIN`), not counted. The board counts both per stretch (`unsure`, `near_miss` in each bout) and publishes the last 10 steps' mean peak (`step_peak_recent`).
+- The dashboard shows a bar of clear / unsure / near-miss steps and "likely steps − unsure to steps + near misses" for the current walk or run, or the last one once you stop (each finished walk/run also gets its likely range in the recent-stretches table), plus the held-out median and 90th-percentile count error (`count_err_p90_pct` in `steps_model.json`, 13.5%).
+- **Checked on the training recordings** (the final net, so a little flattering): counted steps peaking at 0.5–0.6 were on a tap 45% of the time, 0.6–0.7 79%, 0.7 and up 96–99%. Uncounted peaks at 0.45–0.5 were steps 40% of the time, lower ones never. Not yet checked held out.
 
 **Distance (dashboard):** steps × step length, shown as a range.
 - Step length isn't measured. Without calibration it uses rough rules of thumb: step ≈ 0.37–0.45 × height walking and 0.5–0.8 × height running (half of last week's stride ratios). If no height is entered, 155–195 cm is assumed. The net's own held-out count error (which the board reports from `steps_model.json`) is added on top; 10% until there is one.
@@ -270,7 +275,7 @@ The board times each session itself and saves it to `data/` in its app folder, s
 **Before the real data** (2026-11-02): a synthetic pipeline test (fake taps from the old rule, a fake phone from the shifted shin signal), the real `main.py` in a simulation (fake Bridge and MQTT, simulated clock), and headless-Chrome screenshots of the phone page and dashboard. They checked the plumbing, not the accuracy.
 
 **Training timelapse** (`timelapse_steps.py` → `figures/steps_timelapse.json`, played by `timelapse.html`): re-trains BANJO's fold exactly as `train_steps.py` does (same seed and sessions) and snapshots it 283 times over its 2500 updates, densely at first. Each snapshot has both losses (augmented training clips and BANJO's real recordings), the steps it counts on each of BANJO's sessions, and its output over 8 s of four of them (walk, stairs, fast run, air-bike). The last frame equals BANJO's line in `train_steps.py`'s output (372 steps vs 368 taps).
-- One finding from it: BANJO's held-out loss is lowest around update 250 and drifts up after, while the training loss keeps falling and the count barely changes. The net gets more confident in peak shapes it learned from the five others, without counting a new person any better.
+- One finding from it: BANJO's held-out loss is lowest at update 110 (1.52) and drifts up after (1.88 at the end), while the training loss keeps falling and the count barely changes. The net gets more confident in peak shapes it learned from the five others, without counting a new person any better.
 - Open it at <https://sl-ter.github.io/me193/ActivityWearable/timelapse.html>, or locally with `cd ActivityWearable && python -m http.server 8000` → <http://localhost:8000/timelapse.html> (browsers won't load its data from a file opened directly).
 
 **Run it:**

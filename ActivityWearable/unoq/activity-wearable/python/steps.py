@@ -30,6 +30,12 @@ MAX_PHONE_GAP = 5        # samples: phone readings further apart than this (50 m
 CHANNELS = ["shin_ax", "shin_ay", "shin_az", "shin_gx", "shin_gy", "shin_gz", "shin_amag",
             "phone_up", "phone_side", "phone_turn", "phone_swing", "phone_on"]
 PHONE_CH = slice(7, 12)
+# How sure the net was, for the dashboard. On the training recordings (the
+# final net, so a little flattering), counted steps peaking at 0.5-0.6 were on
+# a tap 45% of the time, 0.6-0.7 79%, 0.7 and up 96-99%; uncounted peaks at
+# 0.45-0.5 were on a tap 40% of the time, lower ones never.
+UNSURE_MARGIN = 0.2      # a counted step peaking under threshold + this is "unsure"
+NEAR_MARGIN = 0.05       # an uncounted peak this close under the threshold is a "near miss"
 
 
 def phone_on_grid(t, vals, grid):
@@ -150,6 +156,7 @@ class StepCounter:
         self.next_out = None     # seq of the next output the network hasn't computed
         self.probs = deque()     # (seq, p) not yet decided, plus gap samples of history
         self.decided = None      # every seq up to this one has been decided
+        self.last_peaks, self.last_near = [], 0
 
     def add_shin(self, seq, v):
         if self.shin and seq != self.shin[-1][0] + 1:   # a gap: start over after it
@@ -164,7 +171,9 @@ class StepCounter:
     def update(self, ready):
         """Run the network on everything that's due. ready = the newest seq
         whose inputs are all in (the phone's data arrives a little late).
-        Returns the seqs of new steps."""
+        Returns the seqs of new steps. Afterwards last_peaks holds their peak
+        probabilities and last_near the number of near misses."""
+        self.last_peaks, self.last_near = [], 0
         if not self.shin or self.next_out is None:
             return []
         last_out = min(ready, self.shin[-1][0]) - self.reach
@@ -193,10 +202,14 @@ class StepCounter:
         start = self.decided + 1 if self.decided is not None else seqs[0]
         end = seqs[-1] - self.gap                       # p is known up to end + gap
         steps = []
-        for i in np.flatnonzero((seqs >= start) & (seqs <= end) & (p >= self.threshold)):
+        for i in np.flatnonzero((seqs >= start) & (seqs <= end) & (p >= self.threshold - NEAR_MARGIN)):
             lo = max(0, i - self.gap)
             if lo + int(np.argmax(p[lo:i + self.gap + 1])) == i:
-                steps.append(int(seqs[i]))
+                if p[i] >= self.threshold:
+                    steps.append(int(seqs[i]))
+                    self.last_peaks.append(float(p[i]))
+                else:
+                    self.last_near += 1
         if end >= start:
             self.decided = int(end)
         while self.probs and self.probs[0][0] < self.decided - self.gap:

@@ -738,3 +738,17 @@ real bugs plus a round of feature requests.
 - New `timelapse_steps.py` + `timelapse.html`: one fold (BANJO held out) re-trained identically and snapshotted 283 times; the page plays back the net's output on 4 recordings, both losses and the step counts. Last frame = BANJO's line in `train_steps.py`. `train()` takes a `snapshot` callback for it.
 - Deployed the final net over USB (board on XFSsetup9084 at 10.0.0.32, which VS Code couldn't reach: macOS blocks its local-network access). The app runs, but the board reports `IMU: not found` (wiring, after collection was done).
 - This file had been cut down to its last entry on 2026-11-02 (a write that replaced it instead of appending). Rebuilt from the last commit plus one uncommitted entry, recovered from the session transcript.
+
+## Activity wearable: Notion write-up draft, loss-bowl explainer — 2026-11-03
+
+- First draft of the week 2 Notion page, now in Sam's Obsidian vault (`notion draft.md`; deleted from the repo, never committed) (intro, links, demo shot list, the three-paragraph net explanation, uncertainty analysis, distance and its limits, training timelapse). Placeholders marked **TODO (Sam)** for the video, the live check, the distance test, the reflection answers and Sam's own wording.
+- New in the uncertainty analysis, from `figures/steps_results.json`: 9 in 10 held-out sessions are within 13.5% for the net + phone (8.8% for last week's rule). The tail comes from DHRUV's runs and MAYA's stop-start/turning walks.
+- Fixed the README's timelapse finding: BANJO's held-out loss is lowest at update 110, not 250.
+- A loss-bowl explainer for Anna's gradient-descent page (3D bowl, top view, the two slices, stability limit), published as a claude.ai artifact.
+
+## Activity wearable: how sure the step net is, on the dashboard — 2026-11-03
+
+- `steps.py` `StepCounter` now also reports each new step's peak probability (`last_peaks`) and the peaks just under the threshold it didn't count (`last_near`). The steps themselves are unchanged: `check_live_matches_offline` still passes.
+- `main.py` counts unsure steps (peak under threshold + 0.2) and near misses per bout, and publishes `step_peak_recent` and `step_threshold` in `.../live`. `dashboard.html` shows them under How far for walk/run: a clear/unsure/near-miss bar and "likely N–M steps", plus the held-out median and 90th-percentile error.
+- `train_steps.py` saves the 90th-percentile error (`p90_abs_err_pct`, `count_err_p90_pct`); added to the existing `steps_results.json` and `steps_model.json` without retraining (13.5%).
+- Needs a redeploy of the board app to show up live.

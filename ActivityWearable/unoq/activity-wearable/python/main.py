@@ -413,7 +413,10 @@ class Live:
         self.latest = None
         self.steps = S.StepCounter(STEPS_PATH) if os.path.exists(STEPS_PATH) else None
         self.step_total = 0                 # since the app started
+        self.unsure_total = 0               # counted steps the net was unsure of (steps.UNSURE_MARGIN)
+        self.near_total = 0                 # peaks just under the threshold, not counted (steps.NEAR_MARGIN)
         self.step_seqs = deque()            # recent steps, for the live rate
+        self.recent_peaks = deque(maxlen=10)  # the last 10 steps' peak probabilities
         self.bout, self.pending, self.bout_n = None, None, 0
         self.recent_bouts = deque(maxlen=RECENT_BOUTS)
         self.finished = None                # a bout that just ended, for main loop to publish
@@ -448,6 +451,9 @@ class Live:
             return
         new = self.steps.update(ready)
         self.step_total += len(new)
+        self.unsure_total += sum(p < self.steps.threshold + S.UNSURE_MARGIN for p in self.steps.last_peaks)
+        self.near_total += self.steps.last_near
+        self.recent_peaks.extend(self.steps.last_peaks)
         self.step_seqs.extend(new)
         while self.step_seqs and self.step_seqs[0] < self.last_seq - STEP_RATE_S * RATE_HZ:
             self.step_seqs.popleft()
@@ -473,6 +479,8 @@ class Live:
             "steps_total": self.step_total if self.steps else None,
             "step_rate_spm": round(len(self.step_seqs) * 60 / STEP_RATE_S) if self.steps else None,
             "step_net": self.steps.spec.get("summary") if self.steps else None,
+            "step_peak_recent": round(float(np.mean(self.recent_peaks)), 2) if self.recent_peaks else None,
+            "step_threshold": self.steps.threshold if self.steps else None,
             "phone": phone.status(now, self.last_seq),
             "bout": bout, "recent_bouts": list(self.recent_bouts),
         }
@@ -485,27 +493,33 @@ class Live:
         Its steps are the ones counted while it lasted (the step net answers
         about 1.3 s late, about as late as the activity answer)."""
         if self.bout is None:
-            self.bout = {"id": 0, "label": label, "start": now, "steps0": self.step_total}
+            self.bout = {"id": 0, "label": label, "start": now, "counts0": self.counts()}
         if label == self.bout["label"]:
             self.pending = None
         elif self.pending is None or self.pending["label"] != label:
-            self.pending = {"label": label, "t": now, "steps": self.step_total, "count": 1}
+            self.pending = {"label": label, "t": now, "counts": self.counts(), "count": 1}
         else:
             self.pending["count"] += 1
         if self.pending and self.pending["count"] >= BOUT_CONFIRM:
-            done = self.bout_summary(self.pending["t"], self.pending["steps"])
+            done = self.bout_summary(self.pending["t"], self.pending["counts"])
             self.recent_bouts.appendleft(done)
             self.finished = done
             self.bout_n += 1
             self.bout = {"id": self.bout_n, "label": self.pending["label"], "start": self.pending["t"],
-                         "steps0": self.pending["steps"]}
+                         "counts0": self.pending["counts"]}
             self.pending = None
-        return self.bout_summary(now, self.step_total)
+        return self.bout_summary(now, self.counts())
 
-    def bout_summary(self, end, steps_now):
+    def counts(self):
+        return {"steps": self.step_total, "unsure": self.unsure_total, "near_miss": self.near_total}
+
+    def bout_summary(self, end, counts_now):
+        """steps: counted in this bout; unsure: how many of those the net was
+        unsure of; near_miss: peaks just under the threshold, not counted."""
         b = self.bout
         return {"id": b["id"], "label": b["label"], "start": round(b["start"], 1),
-                "duration_s": round(end - b["start"], 1), "steps": steps_now - b["steps0"]}
+                "duration_s": round(end - b["start"], 1),
+                **{k: counts_now[k] - b["counts0"][k] for k in counts_now}}
 
 
 live_model = None

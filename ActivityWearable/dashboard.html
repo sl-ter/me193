@@ -154,6 +154,16 @@
   .far-big { font-size: 40px; font-weight: 750; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.05; }
   .far-range { color: var(--text-secondary); font-size: 15px; font-variant-numeric: tabular-nums; }
   .far-sub { color: var(--text-secondary); font-size: 14px; margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+  .conf { display: grid; gap: 6px; margin: -4px 0 12px; }
+  .conf-bar { display: flex; gap: 2px; height: 10px; }
+  .conf-bar div { border-radius: 3px; min-width: 3px; }
+  .conf-bar .clear { background: var(--accent); }
+  .conf-bar .unsure { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .conf-bar .near { border: 1.5px dashed var(--accent); }
+  .conf-text { font-size: 13.5px; color: var(--text-secondary); line-height: 1.45; font-variant-numeric: tabular-nums; }
+  .conf-text b { color: var(--text-primary); font-weight: 600; }
+  table.bouts .likely { color: var(--text-muted); font-size: 13px; }
+  .conf-key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin: 0 4px 0 2px; vertical-align: -1px; }
   .far-controls { display: grid; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; font-size: 14px; color: var(--text-secondary); }
   .far-controls .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .far-controls input, .far-controls select, .far-controls button {
@@ -246,6 +256,10 @@
       <div class="far-now"><div class="badge" id="far-badge">·</div>
         <div><div class="far-big" id="far-big">–</div><div class="far-range" id="far-range"></div></div></div>
       <div class="far-sub" id="far-sub"></div>
+      <div class="conf" id="far-conf" hidden>
+        <div class="conf-bar" id="conf-bar" aria-hidden="true"></div>
+        <div class="conf-text" id="conf-text"></div>
+      </div>
       <table class="bouts" id="bouts"></table>
       <div class="far-controls">
         <div class="row">Wearer's height <input id="height" placeholder="6'5 or 196"> <span id="height-ok"></span></div>
@@ -482,10 +496,41 @@ function showFar(m) {
   $("far-sub").textContent = t.sub + (m.steps_total != null ? ` · ${m.steps_total} steps since the board started` : "");
   $("bouts").innerHTML = (m.recent_bouts || []).slice(0, 5).map(r => {
     const x = boutText(r);
-    return `<tr><td><i style="background:var(--${r.label})"></i>${r.label}</td><td>${fmtDur(r.duration_s)}</td><td>${r.steps != null ? r.steps + " steps" : ""}</td><td>${x.short}</td></tr>`;
+    return `<tr><td><i style="background:var(--${r.label})"></i>${r.label}</td><td>${fmtDur(r.duration_s)}</td><td>${r.steps != null ? r.steps + " steps" : ""}${moving(r) ? ` <span class="likely">(likely ${likely(r)})</span>` : ""}</td><td>${x.short}</td></tr>`;
   }).join("");
+  showConfidence(m, b);
   if (cal) $("cal-msg").textContent = `${m.steps_total - cal.steps0} steps so far…`;
   updateNote();
+}
+// How sure the net is about this stretch's count. "Unsure" steps peaked
+// within 0.2 of the threshold (on the training recordings, about half of
+// those at 0.5-0.6 weren't on a tap); "near misses" peaked just under it and
+// weren't counted (about 40% were steps). So the count likely lies between
+// steps - unsure and steps + near misses.
+const moving = r => (r.label === "walk" || r.label === "run") && r.unsure != null && r.steps > 0;
+const likely = r => `${r.steps - r.unsure}–${r.steps + r.near_miss}`;
+function showConfidence(m, cur) {
+  const box = $("far-conf");
+  // the current walk/run, or else the last one (so it's still there once you stop to look)
+  const b = moving(cur) ? cur : (m.recent_bouts || []).find(moving);
+  if (!b) { box.hidden = true; return; }
+  box.hidden = false;
+  box.style.setProperty("--accent", `var(--${b.label})`);
+  const which =b === cur ? "" : `Your last ${b.label} (${b.steps} steps): `;
+  const clear = b.steps - b.unsure;
+  $("conf-bar").innerHTML = [["clear", clear], ["unsure", b.unsure], ["near", b.near_miss]]
+    .filter(([, n]) => n > 0).map(([c, n]) => `<div class="${c}" style="flex:${n}"></div>`).join("");
+  const net = m.step_net || {};
+  const peak = m.step_peak_recent != null && m.step_threshold != null
+    ? ` The last 10 steps peaked at <b>${m.step_peak_recent.toFixed(2)}</b> on average (it counts a step above ${m.step_threshold}, and peaks above ${(m.step_threshold + 0.2).toFixed(1)} are almost always right).` : "";
+  const heldOut = net.count_err_pct != null
+    ? ` On people it never saw, a session's count was typically within ${net.count_err_pct}%` +
+      (net.count_err_p90_pct != null ? `, and 9 in 10 within ${net.count_err_p90_pct}%.` : ".") : "";
+  $("conf-text").innerHTML =
+    which + `How sure the net is: <span class="conf-key" style="background:var(--accent)"></span><b>${clear}</b> clear` +
+    ` · <span class="conf-key" style="background:color-mix(in srgb, var(--accent) 35%, transparent)"></span><b>${b.unsure}</b> unsure` +
+    ` · <span class="conf-key" style="border:1.5px dashed var(--accent)"></span><b>${b.near_miss}</b> near ${b.near_miss === 1 ? "miss" : "misses"}` +
+    `, so likely <b>${likely(b)}</b> steps.` + peak + heldOut;
 }
 function updateNote() {
   const parts = ["walk", "run"].map(g => {
@@ -565,11 +610,13 @@ if (!DEMO && window.mqtt) {
       demoBout = { id: demoRecent.length, label: act, start: t, duration_s: 0, steps: 0 };
     }
     demoBout.duration_s = into; demoBout.steps = steps; demoTotal += steps - (demoBout._s || 0); demoBout._s = steps;
+    demoBout.unsure = Math.floor(steps / 9); demoBout.near_miss = Math.floor(steps / 14);
     const live = { m1, m1_peak: peak, m1_thresholds: cuts, m1_direction: "+y", m2: act, m2_kind: "forest", m2_proba: proba,
                acc_y_mean: act === "bike" ? 0.2 : 0.98, gyro_x_std: act === "still" ? 1 : 140,
                cadence_hz: { still: 0, walk: 0.9, run: 1.4, bike: 1.1 }[act], cadence_share: act === "still" ? 0 : 0.4,
                steps_total: demoTotal, step_rate_spm: Math.round(rate * 60),
-               step_net: { count_err_pct: 4, count_err_pct_shin_only: 7 },
+               step_net: { count_err_pct: 4, count_err_pct_shin_only: 7, count_err_p90_pct: 14 },
+               step_peak_recent: 0.78, step_threshold: 0.5,
                bout: demoBout, recent_bouts: demoRecent.slice(0, 6) };
     showLive(live); showFar(live);
     const rows = [];

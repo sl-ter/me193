@@ -369,6 +369,7 @@ def summarise(rows):
         errs = [abs(r[key] - r["taps"]) / r["taps"] * 100 for r in walking]
         out[key] = {
             "median_abs_err_pct": round(float(np.median(errs)), 1) if errs else None,
+            "p90_abs_err_pct": round(float(np.percentile(errs, 90)), 1) if errs else None,
             "total_abs_err_pct": round(sum(abs(r[key] - r["taps"]) for r in walking) /
                                        max(1, sum(r["taps"] for r in walking)) * 100, 1),
             "false_steps_per_min": round(sum(r[key] for r in zero) / max(1e-9, sum(r["seconds"] for r in zero) / 60), 2)
@@ -598,7 +599,8 @@ def main():
                        "sessions": len(sessions), "taps": int(sum(len(s["taps"]) for s in sessions)),
                        "evaluation": how,
                        "count_err_pct": summary["net_phone"]["median_abs_err_pct"],
-                       "count_err_pct_shin_only": summary["net_shin"]["median_abs_err_pct"]}
+                       "count_err_pct_shin_only": summary["net_shin"]["median_abs_err_pct"],
+                       "count_err_p90_pct": summary["net_phone"]["p90_abs_err_pct"]}
     model_json.write_text(json.dumps(spec))           # saved before the checks, so a failed check keeps the net
     diff = check_numpy_matches_torch(net, spec, sessions)
     checked = check_live_matches_offline(spec, sessions)

@@ -661,6 +661,20 @@ real bugs plus a round of feature requests.
 - Bug fixed along the way: renaming openpyxl sheets *after* adding charts leaves the charts pointing at `'Sheet'`, which Excel then reports as a broken external link (blank chart + "UNABLE TO REFRESH"). Set sheet titles before building charts.
 - Added `openpyxl` (+ `et-xmlfile`) to the root requirements.
 
+## One-neuron ReLU loss regression — 2026-10-29
+
+- Handout part 2 ("what if I have an activation layer?"): Sam was asked for a loss regression with one neuron and one activation layer, in PyTorch, plus an Excel version. Sam specified **ReLU** (the activation the class uses).
+- New folder `relu_lossregression/`:
+  - `annacode-v.tsv`: example data from Anna's site, a V ≈ |2x − 120| + noise.
+  - `one_neuron.py`: PyTorch `Linear(1,1)` → `ReLU`, `MSELoss`, SGD lr 0.1, 50 epochs, start m = b = 1, float64. Saves `one_neuron_fit.png`.
+  - `build_workbook.py` → `one_neuron_relu.xlsx`: a Training tab with one row per epoch, and an "Epoch 0 by hand" tab with the per-point chain rule.
+  - The workbook uses MSELoss's 2/N factor so its rows equal PyTorch's.
+- Checked: the formula math, evaluated in numpy, equals PyTorch's m, b, dm, db and loss at epochs 0, 1, 2 and 50. LibreOffice isn't installed, so the workbook itself wasn't recalculated here.
+- Result: y = ReLU(−0.0332x + 41.12), loss 567. The ReLU ends "on" for all 120 points, which is the same as a plain line. One ReLU can't bend both ways, so it can't fit the V.
+  - In earlier testing, an abs activation got loss 3.7 (y = |2.008x − 120.4|).
+  - Two ReLU neurons (ReLU(z) + ReLU(−z)) would fit the V. Not built yet; offered to Sam.
+- torch isn't in the root venv. The script runs with `CustomRobotCentering/.venv` (torch 2.14.1).
+
 ## Activity wearable: neural-net step counter — 2026-11-02
 
 - Week 2 assignment: "extend your walker to now count your steps using a neural net and PyTorch. Use every sensor you can to make it as accurate as possible."
@@ -752,3 +766,30 @@ real bugs plus a round of feature requests.
 - `main.py` counts unsure steps (peak under threshold + 0.2) and near misses per bout, and publishes `step_peak_recent` and `step_threshold` in `.../live`. `dashboard.html` shows them under How far for walk/run: a clear/unsure/near-miss bar and "likely N–M steps", plus the held-out median and 90th-percentile error.
 - `train_steps.py` saves the 90th-percentile error (`p90_abs_err_pct`, `count_err_p90_pct`); added to the existing `steps_results.json` and `steps_model.json` without retraining (13.5%).
 - Needs a redeploy of the board app to show up live.
+
+## Fitting the V in Anna's code (relu_lossregression rework) — 2026-11-08
+
+- Assignment, as Sam received it: fit a model to the V data in Anna's code; include the gradient-descent math for a single neuron + ReLU, an Excel sheet with 5 iterations on m & b, and Python with a data + fit plot and a loss vs epoch plot.
+- Read Anna's source (`chrisbuerginrogers/ME193-Robotics`, `Public stuff/AnnaCode`) to work out what's wanted:
+  - V example (`network/training.py` `EXAMPLES["v"]`): 120 points, x uniform 20–100, `2·|x − 60|` + N(0, 2) noise.
+  - The site's hint: hidden layer of ≥2 ReLU neurons, output activation None.
+  - The Fitting tab is for setting weights by hand. Its Train buttons still work, and it hides the output layer's activation.
+  - Training details: x standardized; y standardized unless the last layer has an activation; MSE with 2·err; averaged gradients clipped to ±5; default lr 0.05; Randomize gives uniform(−1,1)/√fan_in weights and zero bias.
+- Interpretation: the hand fit and the trained fit happen on the site (2 ReLU neurons: (2, −120) and (−2, 120), output weights 1, 1, bias 0 gives exactly 2|x − 60|). The math and the Excel cover the single-neuron building block, y = ReLU(m·x̂ + b).
+- `relu_lossregression/` reworked:
+  - README is now the write-up: site steps, LaTeX math, the 5-iteration table, results.
+  - `build_workbook.py` → `v_fit_5_iterations.xlsx`: Iterations tab (rows 0–5 plus charts) and a Per point tab (pre, ReLU, ReLU′, error, chain-rule terms per point per iteration).
+  - `v_fit.py` (numpy, hand-written gradients): part 1 is one neuron (matches the Excel); part 2 is 2 ReLU neurons + linear output with random restarts. Saves `v_fit.png`.
+  - Removed `one_neuron_relu.xlsx` / `one_neuron_fit.png`. `one_neuron.py` (PyTorch) is kept as a cross-check.
+- Verified: the workbook was evaluated with the `formulas` package (in a scratch venv; LibreOffice isn't installed). 0 errors across 5,561 cells, and rows 0–5 equal `v_fit.py`.
+- Findings:
+  - A single ReLU neuron converges to the flat line (loss 567, on for all points) from every start tried.
+  - 2 ReLU neurons reach loss 3.6 (noise floor ~4), but only 6/30 random starts get there. 3 neurons: 15/30, 4: 25/30, 6: 28/30. That's why the site says to randomize and retrain.
+- Not committed or pushed yet.
+
+## Notion write-up for the V fit — 2026-11-08
+
+- `relu_lossregression/v_fit.py` now saves two images, `v_fit.png` (data + fits) and `v_loss.png` (loss vs epoch), to match the assignment's "a plot of the data and the fit and one of the loss". README updated.
+- Drafted the Notion page for Sam. It lives in Sam's Obsidian vault, not this repo (a `notion_page.md` here was deleted at Sam's request). The draft leaves out the hand-set weights and anything learned only from reading Anna's source code.
+- Rebuilt `v_fit_5_iterations.xlsx` to look like a classmate's: a small **Summary** tab (inputs, iterations 1–5 plus "after 5", points with ReLU off, 2 charts) and one tab per iteration (Iteration 1–5, 120 rows × 10 columns, averages on top). The old version was one 45-column "Per point" sheet plus a block of explanation text and a raw-units conversion. The numbers are unchanged, the `formulas` package found 0 errors, and the README, `v_fit.py` and `one_neuron.py` now use the 1–5 / "after 5" numbering.
+

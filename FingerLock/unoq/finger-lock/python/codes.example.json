@@ -1,0 +1,6 @@
+{
+  "_note": "EXAMPLE only. Your real codes go in codes.json (gitignored): run  python FingerLock/set_codes.py",
+  "code": [1, 2, 4],
+  "duress": [4, 2, 1],
+  "topic": "ME193/Sam/safe-example"
+}

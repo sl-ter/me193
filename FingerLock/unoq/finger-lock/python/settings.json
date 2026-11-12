@@ -1,0 +1,11 @@
+{
+  "_note": "Read by the board (main.py) and the laptop safe (laptop_lock.py); redeploy the board after a change (python FingerLock/board.py deploy). calibrate: true runs the camera check (dashboard servo slider, button test) instead of the safe. demo: true sends what the camera reads to the dashboard, for the video only. button: true = the safe sleeps, LEDs dark, until the start button (D2; b on the laptop) is pressed, then takes one code. lockout_s: seconds a lockout lasts after 3 refused codes in a row. open_s: seconds the safe stays open before the latch swings back (shut the door first, or press the button to lock now). owner_threshold: overrides the trained one (0.06, 11/11); the code's owner score, averaged over its digits, must reach it; 0 = owner check off. servo_locked / servo_open: the latch angles, 0-180.",
+  "button": true,
+  "calibrate": false,
+  "demo": false,
+  "lockout_s": 10,
+  "open_s": 15,
+  "owner_threshold": 0,
+  "servo_locked": 90,
+  "servo_open": 0
+}

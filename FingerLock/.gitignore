@@ -1,0 +1,11 @@
+# Hand photos (people's hands, from capture.py): never on GitHub
+data/
+# Photos the laptop safe takes, its timing logs, camera-check pictures pulled from the board
+intruders/
+runs/
+check/
+# Your real codes and the MQTT topic (set_codes.py writes it; deploy.py copies it to the board)
+unoq/finger-lock/python/codes.json
+# Rendered movie frames and videos (rebuild with movie/render.py)
+movie/frames/
+movie/*.mp4

@@ -1,0 +1,123 @@
+{
+  "trained": "2026-11-11",
+  "owner": "SAM",
+  "photos": 6675,
+  "photos_by_person": {
+    "GAVIN": 1990,
+    "JOAQ": 1776,
+    "SAM": 2909
+  },
+  "epochs": 60,
+  "held_out_counting": "the last 20% of SAM's photos of each label (only one session)",
+  "count_acc": 0.8242,
+  "count_trusted_share": 0.7048,
+  "count_trusted_acc": 0.8959,
+  "count_acc_per_label": {
+    "none": 1.0,
+    "0": 0.9474,
+    "1": 0.9737,
+    "2": 0.8808,
+    "3": 0.461,
+    "4": 0.9714,
+    "5": 0.9692
+  },
+  "confusion": [
+    [
+      13,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      36,
+      2,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      37,
+      1,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      2,
+      133,
+      2,
+      13,
+      0
+    ],
+    [
+      0,
+      0,
+      1,
+      10,
+      65,
+      65,
+      0
+    ],
+    [
+      0,
+      1,
+      1,
+      2,
+      0,
+      136,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      63
+    ]
+  ],
+  "count_acc_in_stranger_runs": {
+    "GAVIN": 0.7389,
+    "JOAQ": 0.7253
+  },
+  "stranger_count_acc": {
+    "GAVIN": 0.9131,
+    "JOAQ": 0.643
+  },
+  "owner_method": "prototype",
+  "owner_threshold": 0.06,
+  "owner_checks": {
+    "head": {
+      "threshold": 0.64,
+      "owner_accepted_holds": 0.9016,
+      "stranger_refused_holds": 0.2562,
+      "stranger_refused_by_friend": {
+        "GAVIN": 0.4084,
+        "JOAQ": 0.0671
+      }
+    },
+    "prototype": {
+      "threshold": 0.06,
+      "owner_accepted_holds": 0.9016,
+      "stranger_refused_holds": 0.3979,
+      "stranger_refused_by_friend": {
+        "GAVIN": 0.4292,
+        "JOAQ": 0.359
+      }
+    }
+  },
+  "owner_min_accept": 0.9,
+  "count_conf": 0.8,
+  "hold_frames": 4,
+  "numpy_vs_torch_max_diff": 7.599592208862305e-06
+}

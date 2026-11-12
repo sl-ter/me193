@@ -1,0 +1,29 @@
+{
+  "laptop": {
+    "what": "network only, 640x480 frames, no camera",
+    "frames": 200,
+    "prepare_ms": 1.49,
+    "numpy_net_ms": 0.44,
+    "numpy_net_ms_p90": 0.46,
+    "machine": "Darwin arm64",
+    "when": "2026-11-11T19:54",
+    "torch_net_ms_4_threads": 0.16,
+    "torch_net_ms_1_threads": 0.19
+  },
+  "board": {
+    "what": "the board's own timing (main.py status), live with its camera",
+    "messages": 76,
+    "fps": 14.98,
+    "prepare_ms": 27.09,
+    "numpy_net_ms": 9.52
+  },
+  "laptop_live": {
+    "what": "laptop_lock.py, live with the camera",
+    "files": 18,
+    "frames": 55653,
+    "fps": 30.24,
+    "prepare_ms": 4.85,
+    "numpy_net_ms": 1.5,
+    "numpy_net_ms_p90": 1.78
+  }
+}

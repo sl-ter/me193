@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Infallible Safe</title>
+<!--
+  Live view of the Infallible Safe (FingerLock/). Open it as
+    FingerLock/dashboard.html#ME193/Sam/safe-xxxxxxxx
+  with the topic set_codes.py printed (it's in codes.json, which is gitignored,
+  so the topic never sits in the repo). It listens on the same public broker
+  as the wearable's dashboard and shows:
+    - the safe's state (locked / entering n of 4 / open / lockout) and speed
+    - what the camera reads, only if demo mode is on (the board never sends it otherwise)
+    - alerts with their photos: a stranger's hand, a lockout, the duress code (silent alarm)
+    - during the camera check (no trained network on the board yet): the whole
+      camera frame once a second with the network's square outlined, for
+      building the camera rig, and the check report
+  On a phone (from GitHub Pages) it's the safe's alarm: alerts can vibrate and beep.
+-->
+<style>
+  :root {
+    --bg: #fcfcfb; --card: #ffffff; --ink: #0b0b0b; --ink2: #52514e; --line: #e6e5e0;
+    --blue: #2a78d6; --orange: #eb6834; --green: #1baf7a; --red: #d33b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141413; --card: #1d1d1b; --ink: #f2f1ec; --ink2: #a9a79f; --line: #33322e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.4 -apple-system, system-ui, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+  h1 { font-size: 22px; margin: 0; }
+  .muted { color: var(--ink2); font-size: 13px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink2); margin: 0 0 10px; }
+  #state { font-size: 34px; font-weight: 700; }
+  #state.open { color: var(--green); } #state.lockout { color: var(--red); }
+  .dots span { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-right: 6px;
+               border: 2px solid var(--blue); }
+  .dots span.on { background: var(--blue); }
+  .bar { display: grid; grid-template-columns: 70px 1fr 42px; gap: 8px; align-items: center; margin: 3px 0; font-size: 13px; }
+  .bar i { display: block; height: 12px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .bar b { display: block; height: 100%; background: var(--blue); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; }
+  .kv dt { color: var(--ink2); } .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+  #alerts { display: grid; gap: 10px; }
+  .alert { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: start; }
+  .alert img, #view { width: 160px; image-rendering: pixelated; border-radius: 6px; border: 1px solid var(--line); }
+  #frame { display: block; width: 100%; max-width: 640px; border-radius: 6px; border: 1px solid var(--line); }
+  .alert.duress { border-left: 4px solid var(--red); padding-left: 10px; }
+  .tag { font-weight: 700; }
+  pre { white-space: pre-wrap; font-size: 12px; margin: 0; max-height: 260px; overflow: auto; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  .warn { color: var(--orange); font-weight: 600; }
+  @media (max-width: 520px) { .alert { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Infallible Safe</h1>
+    <span class="muted" id="conn">connecting...</span>
+  </header>
+  <p id="notopic" class="warn" hidden>Add the safe's topic to the address: dashboard.html#ME193/Sam/safe-xxxxxxxx (set_codes.py prints it).</p>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Safe</h2>
+      <div id="state">-</div>
+      <div class="dots" id="dots"></div>
+      <p class="muted" id="sub">waiting for the safe</p>
+      <p class="warn" id="example" hidden>Using the EXAMPLE codes: run set_codes.py and redeploy.</p>
+    </section>
+    <section class="card">
+      <h2>What the camera reads <span class="muted">(demo mode only)</span></h2>
+      <div id="probs"><p class="muted">The safe only sends this with "demo": true in codes.json.</p></div>
+      <div class="bar" id="ownerbar" hidden><span>owner</span><i><b></b></i><span></span></div>
+    </section>
+    <section class="card">
+      <h2>Speed</h2>
+      <dl class="kv" id="speed"><dt>frames/s</dt><dd>-</dd></dl>
+    </section>
+  </div>
+
+  <section class="card" id="checkcard" hidden>
+    <h2>Camera check</h2>
+    <img id="frame" alt="the whole camera frame">
+    <p class="muted" id="framenote">The whole camera frame, once a second. Only the outlined square goes to the network: keep everything but the mat out of it.</p>
+    <div class="grid">
+      <div><img id="view" alt="what the network gets"><p class="muted">What the network gets: the square, grey.</p></div>
+      <pre id="report"></pre>
+    </div>
+    <h2 style="margin-top:16px">Servo: find the locked and open angles</h2>
+    <p class="muted">Only works while the board is in camera-check mode (no trained network yet). Move the arm, note the
+      angle that holds the door shut and the one that clears it, and put them in settings.json.</p>
+    <p><input type="range" id="servo" min="0" max="180" value="90" style="width:min(100%,420px)">
+      <b id="servoval">90&deg;</b></p>
+    <p id="servobtns"><button data-a="0">0&deg;</button> <button data-a="45">45&deg;</button>
+      <button data-a="90">90&deg;</button> <button data-a="135">135&deg;</button> <button data-a="180">180&deg;</button>
+      <button data-a="-1">let go</button></p>
+    <p class="muted" id="servonow">The board hasn't reported the servo yet.</p>
+    <h2 style="margin-top:16px">Start button</h2>
+    <p class="muted" id="buttonnow">The board hasn't reported the button yet.</p>
+  </section>
+
+  <section class="card">
+    <h2>Alerts</h2>
+    <p><button id="alarm">Turn on alarm sound and vibration</button></p>
+    <div id="alerts"><p class="muted">None yet.</p></div>
+  </section>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+const BROKER = "wss://broker.emqx.io:8084/mqtt";        // same as the wearable's dashboard
+const TOPIC = decodeURIComponent(location.hash.slice(1)).trim();
+const LABELS = ["no hand", "0", "1", "2", "3", "4", "5"];
+const $ = (id) => document.getElementById(id);
+let soundOn = false, audio = null, client = null;
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])); }
+
+function showStatus(d) {
+  const s = $("state");
+  let text = d.state ? d.state.toUpperCase() : "-";
+  if (d.state === "idle") text = "ASLEEP: PRESS THE BUTTON";
+  if (d.state === "locked" && d.entered) text = `ENTERING ${d.entered}/${d.code_len}`;
+  if (d.state === "open" || d.state === "lockout") text += ` ${Math.ceil(d.left_s || 0)} s`;
+  s.textContent = text;
+  s.className = d.state || "";
+  $("dots").innerHTML = d.code_len ? Array.from({length: d.code_len}, (_, k) => `<span class="${k < d.entered ? "on" : ""}"></span>`).join("") : "";
+  $("sub").textContent = `${d.platform || "?"}${d.need_clear ? " | waiting for the hand to leave the mat" : ""}${d.fails ? ` | ${d.fails} wrong in a row` : ""}`;
+  $("example").hidden = !d.example_codes;
+  if ((d.state || "").startsWith("camera check")) $("checkcard").hidden = false;
+  if (d.button_presses !== undefined) $("buttonnow").textContent = d.button_presses
+    ? `The board has counted ${d.button_presses} button press${d.button_presses === 1 ? "" : "es"}.`
+    : "No button presses yet: press it to test the wiring.";
+  if (d.servo_angle !== undefined) $("servonow").textContent = d.servo_angle === null
+    ? "The board hasn't moved the servo yet." : `The board says the servo is at ${d.servo_angle}\u00b0` +
+      (d.servo_angle < 0 ? " (let go)." : ".");
+  const rows = [["frames/s", d.fps], ["prepare ms", d.prep_ms], ["network ms", d.net_ms], ["platform", d.platform]];
+  $("speed").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v ?? "-"}</dd>`).join("");
+}
+
+function showLive(d) {
+  const best = d.probs.indexOf(Math.max(...d.probs));
+  $("probs").innerHTML = d.probs.map((p, k) =>
+    `<div class="bar"><span${k === best ? ' style="font-weight:700"' : ""}>${LABELS[k]}</span><i><b style="width:${(p * 100).toFixed(0)}%"></b></i><span>${p.toFixed(2)}</span></div>`).join("");
+  const ob = $("ownerbar");
+  ob.hidden = false;
+  ob.querySelector("b").style.width = `${(d.owner_p * 100).toFixed(0)}%`;
+  ob.querySelector("b").style.background = "var(--orange)";
+  ob.lastElementChild.textContent = d.owner_p.toFixed(2);
+}
+
+const ALERT_TEXT = {
+  stranger: "A hand that isn't yours tried the safe.",
+  lockout: "3 refused codes in a row: the safe is locked out for a while.",
+  duress: "SILENT ALARM: the duress code was used. The safe opened as normal.",
+};
+
+function showAlert(d) {
+  const list = $("alerts");
+  if (list.querySelector("p.muted")) list.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = `alert card ${d.kind}`;
+  div.innerHTML = `${d.png ? `<img src="data:image/png;base64,${d.png}" alt="photo at the alert">` : "<span></span>"}
+    <div><div class="tag">${esc(d.kind)}</div><div>${esc(ALERT_TEXT[d.kind] || "")}</div>
+    <div class="muted">${esc(d.time || "")} | ${esc(d.board || "")}</div></div>`;
+  list.prepend(div);
+  if (soundOn) {
+    if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+    beep(d.kind === "duress" ? 3 : 1);
+  }
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification(`Safe: ${d.kind}`, {body: ALERT_TEXT[d.kind] || ""});
+  }
+}
+
+function showCheck(d) {
+  $("checkcard").hidden = false;
+  if (d.frame_png) $("frame").src = `data:image/png;base64,${d.frame_png}`;
+  if (d.png) $("view").src = `data:image/png;base64,${d.png}`;
+  if (d.shape) $("framenote").textContent = `The whole camera frame (${d.shape[1]} x ${d.shape[0]}, ${d.fps ?? "?"} frames/s), ` +
+    "once a second. Only the outlined square goes to the network: keep everything but the mat out of it.";
+  if (d.report) $("report").textContent = JSON.stringify(d.report, null, 2);
+}
+
+function beep(n) {
+  if (!audio) return;
+  for (let k = 0; k < n; k++) {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(audio.destination);
+    const t = audio.currentTime + k * 0.35;
+    g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.start(t); o.stop(t + 0.3);
+  }
+}
+
+function sendServo(angle) {
+  $("servoval").textContent = angle < 0 ? "let go" : `${angle}\u00b0`;
+  if (client) client.publish(`${TOPIC}/cmd`, JSON.stringify({cmd: "servo", angle: Number(angle)}));
+}
+$("servo").onchange = (e) => sendServo(Number(e.target.value));
+$("servo").oninput = (e) => { $("servoval").textContent = `${e.target.value}\u00b0`; };
+$("servobtns").querySelectorAll("button").forEach((b) => {
+  b.onclick = () => {
+    const a = Number(b.dataset.a);
+    if (a >= 0) $("servo").value = a;
+    sendServo(a);
+  };
+});
+
+$("alarm").onclick = () => {
+  soundOn = true;
+  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  $("alarm").textContent = "Alarm on";
+  beep(1);
+};
+
+if (!TOPIC) {
+  $("notopic").hidden = false;
+  $("conn").textContent = "no topic";
+} else if (window.mqtt) {
+  $("conn").textContent = `topic ${TOPIC}`;
+  client = mqtt.connect(BROKER, {clientId: "safe-dash-" + Math.random().toString(16).slice(2, 8), reconnectPeriod: 2000});
+  client.on("connect", () => {
+    $("conn").textContent = `connected | ${TOPIC}`;
+    client.subscribe(["status", "alert", "live", "check"].map((s) => `${TOPIC}/${s}`));
+  });
+  client.on("close", () => { $("conn").textContent = "reconnecting..."; });
+  client.on("message", (topic, payload) => {
+    let d;
+    try { d = JSON.parse(payload.toString()); } catch { return; }
+    const sub = topic.slice(TOPIC.length + 1);
+    if (sub === "status") showStatus(d);
+    else if (sub === "live") showLive(d);
+    else if (sub === "alert") showAlert(d);
+    else if (sub === "check") showCheck(d);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+name: Infallible Safe
+description: "Finger-code safe: a USB webcam over a mat, a finger-counting CNN (trained in PyTorch, run in numpy), the lock rules, LED matrix, MQTT alerts with photos. Runs a camera check until a trained model is copied in."
+ports: []
+bricks: []
+icon: 🔐

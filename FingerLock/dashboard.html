@@ -27,6 +27,7 @@
     :root { --bg: #141413; --card: #1d1d1b; --ink: #f2f1ec; --ink2: #a9a79f; --line: #33322e; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }   /* .bar etc. set display, which would otherwise beat the hidden attribute */
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.4 -apple-system, system-ui, sans-serif; }
   main { max-width: 960px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
   header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
@@ -63,7 +64,13 @@
     <h1>Infallible Safe</h1>
     <span class="muted" id="conn">connecting...</span>
   </header>
-  <p id="notopic" class="warn" hidden>Add the safe's topic to the address: dashboard.html#ME193/Sam/safe-xxxxxxxx (set_codes.py prints it).</p>
+  <p id="diag" class="warn" hidden></p>
+  <section class="card" id="topiccard" hidden>
+    <h2>Which safe?</h2>
+    <p class="muted">Paste the safe's topic, the one set_codes.py printed (ME193/Sam/safe-…). Capitals count. This browser remembers it.</p>
+    <p><input id="topicin" placeholder="ME193/Sam/safe-xxxxxxxx" autocapitalize="off" autocorrect="off" spellcheck="false"
+              style="font:inherit;padding:6px;width:min(100%,320px)"> <button id="topicgo">Use it</button></p>
+  </section>
 
   <div class="grid">
     <section class="card">
@@ -111,12 +118,27 @@
     <div id="alerts"><p class="muted">None yet.</p></div>
   </section>
 
+  <section class="card">
+    <h2>On your phone</h2>
+    <p><button id="qrbtn">Show a QR code for this page</button> <button id="topicchange">Change the topic</button></p>
+    <div id="qr" hidden></div>
+    <p class="muted" id="qrnote" hidden>Scan it with the phone's camera to open this exact page. It holds the safe's
+      private topic, so keep it out of photos and videos.</p>
+  </section>
+
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script>
 const BROKER = "wss://broker.emqx.io:8084/mqtt";        // same as the wearable's dashboard
-const TOPIC = decodeURIComponent(location.hash.slice(1)).trim();
+// The topic comes from the address (#ME193/Sam/safe-...), or from this browser's memory of it.
+const TOPIC_KEY = "fingerlock-topic";
+function rememberedTopic() { try { return localStorage.getItem(TOPIC_KEY) || ""; } catch (e) { return ""; } }
+function rememberTopic(t) { try { localStorage.setItem(TOPIC_KEY, t); } catch (e) { /* private mode: fine */ } }
+let TOPIC = decodeURIComponent(location.hash.slice(1)).trim();
+if (TOPIC) rememberTopic(TOPIC);
+else if ((TOPIC = rememberedTopic())) history.replaceState(null, "", "#" + TOPIC);
 const LABELS = ["no hand", "0", "1", "2", "3", "4", "5"];
 const $ = (id) => document.getElementById(id);
 let soundOn = false, audio = null, client = null;
@@ -132,7 +154,7 @@ function showStatus(d) {
   s.textContent = text;
   s.className = d.state || "";
   $("dots").innerHTML = d.code_len ? Array.from({length: d.code_len}, (_, k) => `<span class="${k < d.entered ? "on" : ""}"></span>`).join("") : "";
-  $("sub").textContent = `${d.platform || "?"}${d.need_clear ? " | waiting for the hand to leave the mat" : ""}${d.fails ? ` | ${d.fails} wrong in a row` : ""}`;
+  $("sub").textContent = `${d.platform || "?"}${d.state === "locked" && d.need_clear ? " | waiting for the hand to leave the mat" : ""}${d.fails ? ` | ${d.fails} wrong in a row` : ""}`;
   $("example").hidden = !d.example_codes;
   if ((d.state || "").startsWith("camera check")) $("checkcard").hidden = false;
   if (d.button_presses !== undefined) $("buttonnow").textContent = d.button_presses
@@ -222,21 +244,65 @@ $("alarm").onclick = () => {
   beep(1);
 };
 
+// Say plainly what's wrong instead of sitting at "connecting..." or "waiting for the safe".
+function diag(text) { $("diag").textContent = text || ""; $("diag").hidden = !text; }
+let lastFromSafe = 0, connectedAt = 0;
+setInterval(() => {
+  if (!connectedAt) return;
+  const quiet = (Date.now() - (lastFromSafe || connectedAt)) / 1000;
+  if (!lastFromSafe && quiet > 6) {
+    diag(`Connected, but nothing from the safe on topic "${TOPIC}". Check it matches the topic set_codes.py ` +
+         "printed (capitals count), and that the safe is running (python FingerLock/board.py start).");
+  } else if (lastFromSafe && quiet > 6) {
+    diag(`No word from the safe for ${Math.round(quiet)} s: it may be off or restarting (python FingerLock/board.py start).`);
+  } else diag("");
+}, 1000);
+
+$("topicgo").onclick = () => {
+  const t = $("topicin").value.trim().replace(/^#/, "");
+  if (!t) return;
+  rememberTopic(t);
+  location.hash = t;
+  location.reload();
+};
+$("topicchange").onclick = () => { $("topicin").value = TOPIC; $("topiccard").hidden = false; };
+$("qrbtn").onclick = () => {
+  const box = $("qr");
+  if (box.hidden && window.qrcode) {
+    const qr = qrcode(0, "M");
+    qr.addData(location.href);
+    qr.make();
+    box.innerHTML = qr.createSvgTag(5, 4);
+  } else if (box.hidden) {
+    box.textContent = "Couldn't load the QR code library. Copy this page's address to your phone instead.";
+  }
+  box.hidden = !box.hidden;
+  $("qrnote").hidden = box.hidden;
+  $("qrbtn").textContent = box.hidden ? "Show a QR code for this page" : "Hide the QR code";
+};
+
 if (!TOPIC) {
-  $("notopic").hidden = false;
+  $("topiccard").hidden = false;
   $("conn").textContent = "no topic";
-} else if (window.mqtt) {
+} else if (!window.mqtt) {
+  $("conn").textContent = "not connected";
+  diag("Couldn't load the MQTT library from cdn.jsdelivr.net. Check the internet connection, or turn off " +
+       "content blockers for this page.");
+} else {
   $("conn").textContent = `topic ${TOPIC}`;
   client = mqtt.connect(BROKER, {clientId: "safe-dash-" + Math.random().toString(16).slice(2, 8), reconnectPeriod: 2000});
   client.on("connect", () => {
     $("conn").textContent = `connected | ${TOPIC}`;
+    connectedAt = connectedAt || Date.now();
     client.subscribe(["status", "alert", "live", "check"].map((s) => `${TOPIC}/${s}`));
   });
   client.on("close", () => { $("conn").textContent = "reconnecting..."; });
+  client.on("error", (e) => diag(`Couldn't reach the broker (${BROKER}): ${e && e.message ? e.message : e}`));
   client.on("message", (topic, payload) => {
     let d;
     try { d = JSON.parse(payload.toString()); } catch { return; }
     const sub = topic.slice(TOPIC.length + 1);
+    lastFromSafe = Date.now();
     if (sub === "status") showStatus(d);
     else if (sub === "live") showLive(d);
     else if (sub === "alert") showAlert(d);

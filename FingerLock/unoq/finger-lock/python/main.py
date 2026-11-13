@@ -549,7 +549,7 @@ if not CHECK_MODE:
     policy = LP.make_policy(CODES["code"], CODES.get("duress"), meta, SETTINGS)
     log(f"network from {meta.get('trained', '?')} ({meta.get('photos', '?')} photos), owner threshold {policy.owner_t} "
         f"({'settings.json' if SETTINGS.get('owner_threshold') is not None else 'trained'}, judged per code), "
-        f"open {policy.open_s:g} s, lockout {policy.lockout_s:g} s, servo locked {SERVO_LOCKED} / open {SERVO_OPEN}, "
+        f"bar {policy.conf:.0%}, open {policy.open_s:g} s, lockout {policy.lockout_s:g} s, servo locked {SERVO_LOCKED} / open {SERVO_OPEN}, "
         f"{'waits for the button' if policy.button else 'no button'}, {policy.code_len}-digit code, "
         f"demo {'on' if DEMO else 'off'}")
     servo(SERVO_LOCKED)

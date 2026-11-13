@@ -4,7 +4,7 @@ ME193 Midterm 2: a safe that opens when its camera sees the right code shown wit
 
 The assignment: PyTorch, net built from scratch, returns the number of fingers in the camera image; a Notion page with video, GitHub, intro and good explanations; a stop-action movie with Sam's voice-over explaining the network (CNN and pooling); something fun not done in class; and four sections: the lock policy, 4+ limitations, how the net works (the movie), and the UNO Q setup vs the computer.
 
-Status, 11/11: **working on the UNO Q**: start button, LEDs, 3-digit code, servo latch, dashboard alerts. The network is trained on 6,675 photos of three people's hands (Sam, Joaq, Gavin): 82% of Sam's held-out frames counted right (3 is the weak one, at 46%), and 91% and 64% of Gavin's and Joaq's when it had never seen them. Still to do: more photos of 1s and 3s taken at the safe, the duress code tested on the board, the movie from the final network, the demo video and the write-up.
+Status, 11/11: **working on the UNO Q**: start button, LEDs, 3-digit code, servo latch, dashboard alerts (also on a phone). The network is trained on 8,576 photos of three people's hands (Sam and two volunteers, Subject 1 and Subject 2), including 1,901 of Sam's taken at the safe. On held-out photos from that session it reads 97.9% of frames right, and every held-out burst (15 of 15, at the 70% bar) gives the right digit and never a wrong one. When it had never seen them, it read 85% of Subject 2's frames and 67% of Subject 1's. Still to do: the duress code tested on the board, the movie from the final network, the demo video and the write-up.
 
 ## How it works
 
@@ -34,6 +34,7 @@ python FingerLock/capture.py --person NAME --session s1 --camera N      # a frie
 
 # Network
 python FingerLock/train.py                   # held-out tests, figures/, exports fingernet_model.npz (--quick: 3 epochs)
+python FingerLock/train.py --holdout-tail safe1   # test on the last 20% of each digit's photos from session safe1 (the 11/11 numbers)
 
 # The safe
 python FingerLock/laptop_lock.py --camera N  # on the laptop, with the debug window (b = the start button, q quits); --mqtt also feeds the dashboard
@@ -41,6 +42,9 @@ open "FingerLock/dashboard.html#<topic>"     # status, alerts with photos, camer
 python FingerLock/board.py start              # after the board restarts (its IP scrolls): start the safe
 python FingerLock/board.py deploy             # after any change: copy the app (codes, model, settings.json), start it
 python FingerLock/board.py status             # what the safe says right now; also: logs, stop
+python FingerLock/board.py install-starter    # once: the dashboard's "Start the safe" button works with no laptop, even after a power cut
+python FingerLock/board.py latch              # the board only moves the latch (for --latch below); deploy puts the safe back
+python FingerLock/laptop_lock.py --camera 0 --latch   # the laptop runs the network and rules and opens the real box through the board
 
 # Write-up
 python FingerLock/bench.py; python FingerLock/bench.py --runs; python FingerLock/bench.py --board 60   # speed table
@@ -59,16 +63,18 @@ python -m pytest FingerLock -q               # tests
 |---|---|
 | `capture.py` | labelled photos: keys 0-5 / n for no hand save a 4 s burst at 10 a second (pose first, then press), SPACE saves with no time limit, to `data/<PERSON>/<session>/<label>/` (gitignored) |
 | `train.py` | trains and tests the network (PyTorch), picks the owner check and its threshold on held-out people, exports `unoq/finger-lock/python/fingernet_model.npz`, writes `figures/` |
+| `burst_test.py` | how the safe would do on real attempts: replays the lock rules on held-out bursts (one key press of `capture.py` each) at a few confidence bars; picked the 0.7 bar on 11/11 |
 | `laptop_lock.py` | the safe on the laptop, with a window showing what the network sees; timing logs in `runs/` |
 | `bench.py` | speed table for section 4: laptop network only, laptop live, UNO Q live |
 | `board.py` | the safe on the board in one command: start (after a reboot), deploy (after a change), status, logs, stop; goes through `tools/deploy.py` |
+| `unoq/safe-starter/safe_starter.py` | runs on the board's own Linux, outside App Lab: starts the safe when the dashboard's "Start the safe" button asks (after a power cut the board boots into Board Status), says it's alive every 20 s; kept running by a cron line, installed by `board.py install-starter` |
 | `set_codes.py` | writes `codes.json` (real code, duress code, random MQTT topic) |
 | `dashboard.html` | live state, speed, alerts with photos, camera check |
 | `movie/render.py`, `movie/narration.md` | stop-action frames and per-scene videos from the real network; voice-over draft |
 | `unoq/finger-lock/python/` | the board app: `main.py`, and the shared `fingernet.py`, `lock_policy.py`, `leds.py`, `photo.py`, `camera.py` |
 | `test_lock_policy.py`, `test_fingernet.py` | rules on made-up streams; numpy = PyTorch, preprocessing, PNG, LED frames |
 | `common.py` | paths, owner name, camera opener, codes loader |
-| `unoq/finger-lock/python/settings.json` | the latch servo's locked and open angles (find them with the dashboard's servo slider while the board is in camera-check mode); `calibrate`; `demo`; `owner_threshold` (overrides the trained one, read by the board and `laptop_lock.py`; 0 turns the owner check off); `open_s` (how long the safe stays open); `button` (wait for the start button) |
+| `unoq/finger-lock/python/settings.json` | the latch servo's locked and open angles (find them with the dashboard's servo slider while the board is in camera-check mode); `calibrate`; `demo`; `owner_threshold` (overrides the trained one, read by the board and `laptop_lock.py`; 0 turns the owner check off); `open_s` (how long the safe stays open); `button` (wait for the start button); `lockout_s`; `conf` (how sure a frame must be to count, 0.7) |
 | `box/make_box.py`, `box/dxf/` | laser-cut box: 3 mm birch, finger joints, open top, 150 x 100 x 75 mm, door hole + door + servo hole; one DXF per part, `all_parts.dxf`, previews. Checks the parts in 3D before writing |
 
 ## How the code was developed

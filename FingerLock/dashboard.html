@@ -81,6 +81,11 @@
       <p class="warn" id="example" hidden>Using the EXAMPLE codes: run set_codes.py and redeploy.</p>
     </section>
     <section class="card">
+      <h2>Board</h2>
+      <p><button id="startbtn">Start the safe</button></p>
+      <p class="muted" id="starternow">No word from the board's starter yet (python FingerLock/board.py install-starter).</p>
+    </section>
+    <section class="card">
       <h2>What the camera reads <span class="muted">(demo mode only)</span></h2>
       <div id="probs"><p class="muted">The safe only sends this with "demo": true in codes.json.</p></div>
       <div class="bar" id="ownerbar" hidden><span>owner</span><i><b></b></i><span></span></div>
@@ -246,17 +251,41 @@ $("alarm").onclick = () => {
 
 // Say plainly what's wrong instead of sitting at "connecting..." or "waiting for the safe".
 function diag(text) { $("diag").textContent = text || ""; $("diag").hidden = !text; }
-let lastFromSafe = 0, connectedAt = 0;
+let lastFromSafe = 0, connectedAt = 0, starter = null;
 setInterval(() => {
   if (!connectedAt) return;
   const quiet = (Date.now() - (lastFromSafe || connectedAt)) / 1000;
+  const boardUp = starter && starter.state !== "offline";
   if (!lastFromSafe && quiet > 6) {
-    diag(`Connected, but nothing from the safe on topic "${TOPIC}". Check it matches the topic set_codes.py ` +
-         "printed (capitals count), and that the safe is running (python FingerLock/board.py start).");
+    diag(boardUp ? 'The safe isn\'t running. Press "Start the safe" (Board, below).'
+                 : `Connected, but nothing from the safe on topic "${TOPIC}". Check it matches the topic set_codes.py ` +
+                   "printed (capitals count), and that the board is on.");
   } else if (lastFromSafe && quiet > 6) {
-    diag(`No word from the safe for ${Math.round(quiet)} s: it may be off or restarting (python FingerLock/board.py start).`);
+    diag(`No word from the safe for ${Math.round(quiet)} s: it may be off or restarting.` +
+         (boardUp ? ' "Start the safe" (Board, below) starts it.' : ""));
   } else diag("");
 }, 1000);
+
+// The board's starter (FingerLock/unoq/safe-starter): it starts the safe when asked, e.g. after a power cut.
+function showStarter() {
+  const el = $("starternow");
+  if (!starter) return;
+  if (starter.state === "offline") { el.textContent = "The board is offline: no power, or no Wi-Fi."; return; }
+  if (starter.state === "moved") { el.textContent = "The safe's topic changed: open the dashboard with the new one."; return; }
+  if (starter.state === "starting") { el.textContent = "Starting the safe, about 20 s..."; return; }
+  const age = starter.t ? Math.max(0, Math.round(Date.now() / 1000 - starter.t)) : 0;
+  el.textContent = (age > 60 ? `Last heard from the board ${age} s ago` : "The board is listening") +
+    `; the safe is ${starter.safe_running ? "running" : "not running"}` +
+    (starter.last ? ` (last start: ${starter.last})` : "") + (starter.ip ? ` | board at ${starter.ip}` : "");
+}
+setInterval(showStarter, 5000);
+$("startbtn").onclick = () => {
+  if (!client) return;
+  client.publish(`${TOPIC}/board`, JSON.stringify({cmd: "start"}));
+  $("startbtn").disabled = true;
+  $("startbtn").textContent = "Asked the board...";
+  setTimeout(() => { $("startbtn").disabled = false; $("startbtn").textContent = "Start the safe"; }, 30000);
+};
 
 $("topicgo").onclick = () => {
   const t = $("topicin").value.trim().replace(/^#/, "");
@@ -294,7 +323,7 @@ if (!TOPIC) {
   client.on("connect", () => {
     $("conn").textContent = `connected | ${TOPIC}`;
     connectedAt = connectedAt || Date.now();
-    client.subscribe(["status", "alert", "live", "check"].map((s) => `${TOPIC}/${s}`));
+    client.subscribe(["status", "alert", "live", "check", "starter"].map((s) => `${TOPIC}/${s}`));
   });
   client.on("close", () => { $("conn").textContent = "reconnecting..."; });
   client.on("error", (e) => diag(`Couldn't reach the broker (${BROKER}): ${e && e.message ? e.message : e}`));
@@ -302,6 +331,7 @@ if (!TOPIC) {
     let d;
     try { d = JSON.parse(payload.toString()); } catch { return; }
     const sub = topic.slice(TOPIC.length + 1);
+    if (sub === "starter") { starter = d; showStarter(); return; }
     lastFromSafe = Date.now();
     if (sub === "status") showStatus(d);
     else if (sub === "live") showLive(d);

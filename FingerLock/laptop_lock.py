@@ -6,6 +6,15 @@ laptop's camera (or the board's USB webcam plugged into the laptop).
     python FingerLock/laptop_lock.py --camera 1            # the USB webcam
     python FingerLock/laptop_lock.py --camera 1 --mqtt     # also send status/alerts like the board does
     python FingerLock/laptop_lock.py --camera 1 --torch    # also time PyTorch on each frame
+    python FingerLock/laptop_lock.py --camera 0 --latch    # also open and lock the real box (below)
+
+--latch: the laptop runs the network and the rules, and the board only moves
+the latch. Put the board in calibration mode ("calibrate": true in
+settings.json, then python FingerLock/board.py deploy): there it listens for
+servo commands over MQTT, the ones the dashboard's slider sends. The laptop
+sends servo_open when a code opens it and servo_locked when it relocks
+(angles from settings.json). The webcam is on the Mac for this; the board
+just needs power and Wi-Fi.
 
 The window shows what the board can't: the camera with the crop square, what
 the network sees (64 x 64), its 7 count probabilities, the owner score
@@ -112,6 +121,8 @@ def main():
     ap.add_argument("--demo", action="store_true", help="with --mqtt, also publish live readings (.../live)")
     ap.add_argument("--torch", action="store_true", help="also run the PyTorch network each frame, for timing")
     ap.add_argument("--crop", type=float, default=FN.CROP_FRAC)
+    ap.add_argument("--latch", action="store_true",
+                    help="also open and lock the real box: servo commands over MQTT to the board in calibration mode")
     args = ap.parse_args()
 
     code, duress, topic = load_codes()
@@ -134,16 +145,31 @@ def main():
         torch_net.load_state_dict(sd)
 
     client = None
-    if args.mqtt:
+    if args.mqtt or args.latch:
         import paho.mqtt.client as mqtt
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"safe-laptop-{int(time.time())}")
         client.connect_async(BROKER, PORT, keepalive=15)
         client.loop_start()
-        print(f"MQTT on {topic}")
+        print(f"MQTT on {topic}" + ("" if args.mqtt else " (latch commands only)"))
 
     def publish(sub, payload, qos=0):
-        if client is not None:
+        if client is not None and args.mqtt:
             client.publish(f"{topic}/{sub}", json.dumps(payload), qos=qos)
+
+    servo_locked, servo_open = int(settings.get("servo_locked", 90)), int(settings.get("servo_open", 0))
+
+    def latch(angle):
+        """The real latch, through the board in calibration mode (--latch)."""
+        if args.latch and client is not None:
+            client.publish(f"{topic}/cmd", json.dumps({"cmd": "servo", "angle": angle}), qos=1)
+            print(f"{datetime.now():%H:%M:%S} latch -> {angle}")
+
+    if args.latch:
+        for _ in range(50):                     # up to 5 s to connect, then lock the box to start
+            if client.is_connected():
+                break
+            time.sleep(0.1)
+        latch(servo_locked)
 
     RUNS_DIR.mkdir(exist_ok=True)
     log_path = RUNS_DIR / f"laptop_{datetime.now():%Y%m%d-%H%M%S}.csv"
@@ -190,6 +216,10 @@ def main():
                 events_here.append(e.kind + (f":{e.detail['owner_avg']}" if "owner_avg" in e.detail else ""))
                 if e.kind in ("wrong", "stranger"):
                     flash_kind, flash_until = e.kind, now + FLASH_S
+                if e.kind == "open":
+                    latch(servo_open)           # the duress code opens it the same way
+                elif e.kind == "relock":
+                    latch(servo_locked)
                 kind = ("stranger" if e.kind == "stranger" else "lockout" if e.kind == "lockout"
                         else "duress" if e.kind == "open" and e.duress else None)
                 if kind and not (kind == "stranger" and now - last_stranger < STRANGER_PHOTO_GAP_S):

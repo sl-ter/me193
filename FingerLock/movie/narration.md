@@ -1,41 +1,53 @@
-# Voice-over draft — Infallible Safe movie
+# Voice-over: The Infallible Safe movie
 
-A starting point for the stop-action movie's voice-over, one block per scene (the scene videos are `movie/scene_XX_*.mp4`). Say it in your own words. The assignment wants your explanation, so treat these as notes, not a script to read. Each block is about the length of its scene; in iMovie, stretch or trim a scene to fit what you say.
+The script for the stop-action movie, one block per scene, to read out loud over `movie/infallible_safe.mp4`. Make it sound like you: change any words you want. `render.py` times each scene to its block (150 words a minute, plus a one-second breath), so after changing the words, render again (`python FingerLock/movie/render.py`) and the scenes follow. It prints when each scene starts; update the times in the headings below to match.
 
-Record on Zoom or QuickTime (File > New Audio Recording), one take per scene if that's easier, then drop the clips under the scene videos.
+## How to record
 
-**01 Title (3 s)**
-This is how my safe's neural network turns a camera picture into a number of fingers, and how it knows the hand is mine.
+The simplest way is one take over the whole movie:
 
-**02 Pixels (8 s)**
-The camera looks down at a mat. The safe keeps a grey square of it and shrinks it to 64 by 64: 4,096 numbers, each one how bright that spot is. Before the network sees them, each picture is standardised (minus its average, divided by its spread), so a dim room and a bright room look the same to it.
+1. Open `FingerLock/movie/infallible_safe.mp4` in QuickTime. Start a recording in a second window: File > New Audio Recording (or record yourself on Zoom).
+2. Press play on the movie and read each block when its scene starts (the times are in the headings). If you fall a little behind, skip a breath at the next scene change.
+3. Trim the silence before you pressed play (QuickTime: Edit > Trim), save the audio, say as `~/Desktop/voiceover.m4a`, and put it under the movie:
 
-**03 Convolution (11 s)**
-The first layer is a convolution. A filter is just 9 weights in a 3 by 3 square. Put it on one spot of the picture, multiply each of the 9 pixels under it by its weight, add them up, add a bias: that's one number. Slide one pixel right and do it again, all 4,096 times. The result is a feature map: big where the picture matches the filter's pattern. [Say what this filter lights up on in your frames: the edges of the fingers? one side of them?] I never chose its weights; training did.
+```
+cd ~/Code/Projects/me193
+ffmpeg -i FingerLock/movie/infallible_safe.mp4 -i ~/Desktop/voiceover.m4a -map 0:v -map 1:a -c:v copy -c:a aac FingerLock/movie/infallible_safe_voiced.mp4
+```
 
-**04 Eight filters (4 s)**
-The first layer has 8 filters, so it makes 8 feature maps. Each one looks for its own small pattern, like an edge at a certain angle, everywhere in the picture at once.
+If one take feels rushed, use iMovie instead: drop in the scene videos (`movie/scene_01_title.mp4` to `scene_11_end.mp4`) in order, record each block over its clip with Window > Record Voiceover, and stretch or trim each clip to fit.
 
-**05 ReLU (3 s)**
-Then ReLU, like in my V-fit: negatives become zero, so each map only keeps the places where its pattern was found.
+Keep the recording out of the repo folder (the Desktop is fine): the movie folder only ignores videos and frames.
 
-**06 Max pooling (11 s)**
-Then max pooling. Take each 2 by 2 block and keep only its biggest number. The map is half as wide and half as tall, but the strong responses survive. That makes everything after it four times cheaper, and it means the hand can move a pixel or two without changing the answer much.
+## 01 Title (starts 0:00)
+Here's how my safe's neural network counts fingers. Every filter and feature map on screen comes from the real trained network.
 
-**07 Deeper layers (8 s)**
-That's one round. The network does it three times. The second layer's 16 filters each look at all 8 maps at once, so they can combine edges into bigger shapes. The third layer has 32. After three rounds of pooling, the 64 by 64 picture is 32 maps of 8 by 8: 2,048 numbers.
+## 02 What the camera sees (starts 0:09)
+It starts with the webcam looking down at the mat. The safe takes a grey square of the picture and shrinks it to 64 by 64: 4,096 numbers, one for how bright each spot is.
 
-**08 Two answers (8.5 s)**
-A fully connected layer squeezes those 2,048 numbers into 64: a description of the hand. From that, two answers. One: seven scores, for no hand and zero to five fingers, and softmax turns them into probabilities. Two: is this my hand? The safe keeps my average description for each count and checks how close this hand is to it.
+## 03 Convolution (starts 0:26)
+The first layer is a convolution. A filter is a 3 by 3 grid of weights. It sits on one spot, multiplies the 9 pixels under it by its 9 weights, adds them up, and adds a bias: one number in the feature map. Then it slides one pixel over and does it again, all 4,096 times. This filter lights up along the right edge of each finger. Training picked its weights, not me.
 
-**09 Training (7 s)**
-At the start the filters are random noise. I took about [N] photos of my hand, and a few of friends' hands. Each pass, every wrong answer makes a loss, and backpropagation nudges all [137,544] weights a little downhill, exactly like the gradient descent in my V-fit, just with a lot more weights. You can watch the filters turn into edge detectors as the loss drops.
+## 04 Eight filters (starts 0:58)
+Layer one has 8 filters, so it makes 8 maps. Some find edges at different angles. Others light up on the whole hand, or on the mat.
 
-**10 The safe's rules (9.5 s)**
-The network answers about [6] times a second on the UNO Q. I walk up and press the button, and the LEDs light up. The safe only counts a digit when the same answer holds for 0.8 seconds at 80% or more, and I take my hand off the mat between digits. After three digits it checks two things: the code, and whether the hand looked like mine on average across the whole code. The right code from my hand opens it; three refused codes in a row and it locks itself for ten seconds. And if someone forces me to open it, there's a duress code: it opens exactly the same way, but it secretly sends my phone an alert with a photo.
+## 05 ReLU (starts 1:10)
+Then ReLU, same as my V-fit: every negative becomes zero, so each map only keeps the spots where its pattern showed up.
 
-**11 End (3 s)**
-One network, two answers: how many fingers, and whose hand.
+## 06 Max pooling (starts 1:20)
+Then max pooling: each 2 by 2 block keeps only its biggest number. That halves the width and the height, so there's a quarter as much to compute, but the strongest responses survive.
 
----
-Fill in the bracketed numbers from `figures/results.json` and `figures/bench.json` after training and the speed tests.
+## 07 Deeper layers (starts 1:34)
+That's one round, and the network does three. Layer two's 16 filters each look at all 8 maps at once, so they can combine edges into bigger shapes. Layer three has 32. After three rounds, my photo is 32 maps of 8 by 8: 2,048 numbers.
+
+## 08 Fully connected and softmax (starts 1:56)
+A fully connected layer squeezes those 2,048 numbers down to 64, kind of a description of the hand. A last layer turns those into 7 scores: no hand, or zero to five fingers. Softmax turns the scores into probabilities that add up to one. Here: three fingers, at 99.7 percent.
+
+## 09 Training (starts 2:19)
+So where do the weights come from? Training. I took 8,576 photos, a little over half of them my hand and the rest Subject 1's and Subject 2's. Every pass, each one comes back randomly spun, shifted, flipped, brighter or darker, so the network can't just memorize pixels. The filters start as random noise. The loss is cross-entropy, since it's picking a category. Backpropagation finds which way to nudge every weight to lower it, and gradient descent takes a small step downhill. Same idea as my V-fit, just with 137,544 weights.
+
+## 10 The safe's rules (starts 3:00)
+On the UNO Q, all of that runs about 15 times a second. But the network only says what it sees; the rules decide. The safe sleeps until I press the button. A digit counts once the network is at least 70 percent sure of the same answer for 0.8 seconds, then my hand leaves the mat. The right three digits open the latch. A wrong code gets an X, and three in a row lock it for 10 seconds and send an alert with a photo. My duress code opens it exactly the same way, but quietly sends my phone an alert.
+
+## 11 End (starts 3:44)
+137,544 weights, trained from scratch, counting my fingers on a little Arduino.

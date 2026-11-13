@@ -516,6 +516,11 @@ def main():
     ap.add_argument("--model", type=Path, default=MODEL_PATH, help="where to export the trained network")
     ap.add_argument("--owner", default=OWNER)
     ap.add_argument("--holdout-session", help="the owner's session to test on (default: the last one)")
+    ap.add_argument("--holdout-tail", metavar="SESSION",
+                    help="test on the last 20%% of each label's photos in this owner session and train on the rest of it "
+                         "(how much a session helps on its own conditions)")
+    ap.add_argument("--save-counting-run", type=Path, metavar="NPZ",
+                    help="also save the counting run's network (it never saw the held-out photos), for testing it later")
     ap.add_argument("--owner-method", choices=METHODS, help="force a way of checking the owner")
     ap.add_argument("--epochs", type=int, default=EPOCHS)
     ap.add_argument("--quick", action="store_true", help="3 epochs, just to check everything runs")
@@ -532,17 +537,19 @@ def main():
 
     # Held out: one of the owner's sessions (or, with only one, the last 20% of each label's photos).
     owner_sessions = sorted(set(data.session[data.owner]))
-    hs = args.holdout_session or (owner_sessions[-1] if len(owner_sessions) >= 2 else None)
+    hs = None if args.holdout_tail else (args.holdout_session or (owner_sessions[-1] if len(owner_sessions) >= 2 else None))
     if hs:
         held_owner = data.owner & (data.session == hs)
         held_desc = f"{owner}'s session '{hs}'"
     else:
+        pool = data.owner & (data.session == args.holdout_tail) if args.holdout_tail else data.owner
         held_owner = np.zeros(data.n, bool)
         for li in range(len(LABELS)):
-            idx = np.where(data.owner & (data.label == li))[0]
+            idx = np.where(pool & (data.label == li))[0]
             idx = idx[np.argsort(data.time[idx])]
             held_owner[idx[int(len(idx) * 0.8):]] = True
-        held_desc = f"the last 20% of {owner}'s photos of each label (only one session)"
+        held_desc = (f"the last 20% of {owner}'s session '{args.holdout_tail}', each label" if args.holdout_tail
+                     else f"the last 20% of {owner}'s photos of each label (only one session)")
     if not held_owner.any():
         sys.exit(f"Nothing held out ({held_desc} is empty).")
     friends = sorted(str(p) for p in set(data.person[~data.owner]))
@@ -570,6 +577,12 @@ def main():
         idx_c = np.where(~held_owner)[0]
         net_c, hist_c = train(data, idx_c, epochs, args.seed, {"owner": owner_idx})
         pc, _, _ = predict(net_c, inputs(data.imgs[owner_idx]))
+        if args.save_counting_run:
+            m = {"labels": LABELS, "save_size": FN.SAVE_SIZE, "size": FN.NET_SIZE, "crop_frac": FN.CROP_FRAC,
+                 "count_conf": LP.CONF, "owner_method": "head", "owner_threshold": 0.5, "owner_check": False,
+                 "trained": date.today().isoformat(), "note": f"counting run, never saw {held_desc}"}
+            np.savez(args.save_counting_run, **weights_of(net_c), meta=np.array(json.dumps(m)))
+            print(f"  saved the counting run's network to {args.save_counting_run}")
     else:
         pc, _, _ = predict(net, inputs(data.imgs[owner_idx]))        # the only run already is that
     count_pred = pc.argmax(1)

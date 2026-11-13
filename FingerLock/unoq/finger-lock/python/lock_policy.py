@@ -7,8 +7,9 @@ For every frame the network gives two answers: the probability of each count
 (no hand, 0, 1, 2, 3, 4, 5 fingers) and the probability that the hand is the
 owner's. The rules:
 
-1. Reading: the most likely count, if its probability is at least CONF.
-   Otherwise the frame is "unsure".
+1. Reading: the most likely count, if its probability is at least CONF
+   (settings.json's "conf" on the board and the laptop). Otherwise the
+   frame is "unsure".
 2. A digit (0-5) counts once the same reading has held for HOLD_S seconds.
    That's seconds, not frames, so the rules behave the same at the board's
    frame rate and the laptop's. A different reading has to last longer than
@@ -280,8 +281,10 @@ class LockPolicy:
 def make_policy(code, duress, meta, settings=None):
     """The rules as the board and the laptop run them: the trained model's
     confidence and owner threshold (meta), then settings.json's overrides
-    ("owner_threshold", "open_s", "lockout_s") and whether it waits for the button ("button")."""
+    ("conf", "owner_threshold", "open_s", "lockout_s") and whether it waits for the button ("button")."""
     settings = settings or {}
-    return LockPolicy(code, duress, conf=meta.get("count_conf", CONF), owner_t=owner_threshold(meta, settings),
+    conf = settings.get("conf")
+    conf = float(conf) if conf is not None else float(meta.get("count_conf", CONF))
+    return LockPolicy(code, duress, conf=conf, owner_t=owner_threshold(meta, settings),
                       open_s=float(settings.get("open_s", OPEN_S)), lockout_s=float(settings.get("lockout_s", LOCKOUT_S)),
                       button=bool(settings.get("button", False)))

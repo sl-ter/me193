@@ -2,7 +2,7 @@
 """Stop-action frames that explain the safe's network, drawn from the real
 trained network running on one of your photos. You add the voice-over.
 
-    python FingerLock/movie/render.py                       # a photo of 3 fingers from data/SAM
+    python FingerLock/movie/render.py                       # a photo of 3 fingers from your newest session
     python FingerLock/movie/render.py --photo PATH.png      # a different 128 x 128 photo
     python FingerLock/movie/render.py --untrained           # random weights (to try it before training)
 
@@ -10,22 +10,30 @@ Writes PNG frames to movie/frames/<scene>/ (gitignored), one video per scene
 (movie/scene_XX_<name>.mp4, so each can be stretched to fit your narration in
 iMovie) and the whole thing as movie/infallible_safe.mp4. Frames change at
 about 3 a second during the animated steps, for the stop-action look.
-movie/narration.md has a draft voice-over per scene.
+
+movie/narration.md is the voice-over, one "## NN" block per scene. Each scene
+lasts as long as its block takes to say at WPM words a minute, plus a breath,
+so after changing the words, render again: the scene times printed at the end
+follow the new script.
 
 Scenes:
-  01 title                 07 deeper layers
-  02 pixels                08 fully connected, softmax, owner check
-  03 convolution, step by step
-  04 all 8 filters         09 training
-  05 ReLU                  10 the safe's rules
-  06 max pooling, step by step   11 end
-Nothing here ever shows your real code: the rules scene uses a made-up digit.
+  01 title                       07 deeper layers
+  02 pixels                      08 fully connected, softmax
+  03 convolution, step by step   09 training
+  04 all 8 filters               10 the safe's rules
+  05 ReLU                        11 end
+  06 max pooling, step by step
+The numbers on screen come from figures/results.json, figures/bench.json and
+settings.json. Nothing here ever shows your real code: the rules scene uses a
+made-up digit.
 """
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import matplotlib
@@ -44,6 +52,9 @@ import lock_policy as LP  # noqa: E402
 BG, INK, INK2, LINE = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
 BLUE, ORANGE, GREEN, RED = "#2a78d6", "#eb6834", "#1baf7a", "#d33b3b"
 STEP = 1 / 3            # seconds per animated step (stop-action pace)
+NARRATION = HERE / "narration.md"
+WPM = 150               # narration pace: a scene lasts as long as its block takes to say...
+BREATH_S = 1.0          # ...plus a breath before the next scene
 FFMPEG_CANDIDATES = ["ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
 plt.rcParams.update({"font.size": 13, "text.color": INK, "axes.edgecolor": LINE})
 
@@ -71,7 +82,7 @@ def frame(title, caption=None):
     fig.patch.set_facecolor(BG)
     fig.text(0.035, 0.915, title, fontsize=26, weight="bold")
     if caption:
-        fig.text(0.035, 0.05, caption, fontsize=16, color=INK2, wrap=True)
+        fig.text(0.035, 0.035, "\n".join(textwrap.wrap(caption, 105)), fontsize=16, color=INK2, va="bottom")
     return fig
 
 
@@ -137,11 +148,10 @@ def sym(a):
 
 # ---- Scenes ----------------------------------------------------------------------------------
 
-def s01_title(mv, owner):
+def s01_title(mv):
     fig = frame("")
     fig.text(0.5, 0.58, "The Infallible Safe", ha="center", fontsize=48, weight="bold")
-    fig.text(0.5, 0.47, "How its network counts your fingers, and knows whose hand it is", ha="center",
-             fontsize=20, color=INK2)
+    fig.text(0.5, 0.47, "How its neural network counts your fingers", ha="center", fontsize=20, color=INK2)
     fig.text(0.5, 0.36, "a convolutional neural network built from scratch in PyTorch, running on an Arduino UNO Q",
              ha="center", fontsize=15, color=INK2)
     mv.add(fig, "01_title", 3.0)
@@ -242,7 +252,7 @@ def s04_all_filters(mv, acts, w):
         numbers(fig, [x0, 0.6, 0.1, 0.18], w["conv1_w"][k, 0], "RdBu_r", *sym(w["conv1_w"]), "{:.1f}",
                 f"filter {k + 1}", fontsize=8)
         image(fig, [x0, 0.2, 0.105, 0.3], acts["conv1"][k], "RdBu_r", *sym(acts["conv1"][k]))
-    fig.text(0.04, 0.53, "each filter's feature map (64 x 64):", fontsize=13, color=INK2)
+    fig.text(0.04, 0.47, "each filter's feature map (64 x 64):", fontsize=13, color=INK2)
     mv.add(fig, "04_all_filters", 4.0)
 
 
@@ -306,7 +316,7 @@ def s07_deeper(mv, acts):
     mv.add(fig, "07_deeper", 4.0)
 
 
-def s08_heads(mv, acts, net, owner):
+def s08_heads(mv, acts, owner):
     flat = acts["conv3_pool"].reshape(1, -1)
     h = acts["fc"]
     fig = frame("7. Fully connected: the hand's description",
@@ -314,7 +324,8 @@ def s08_heads(mv, acts, net, owner):
                 "all 2,048, each with its own weight, then ReLU: 64 numbers that describe the hand.")
     image(fig, [0.05, 0.6, 0.9, 0.06], np.repeat(flat, 40, axis=0), "inferno", 0, float(flat.max()) or 1,
           "2,048 numbers in a row")
-    arrow(fig, 0.5, 0.5 + 1e-3, 0.52)
+    fig.add_artist(matplotlib.patches.FancyArrowPatch((0.5, 0.585), (0.5, 0.5), transform=fig.transFigure,
+                                                      arrowstyle="-|>", mutation_scale=22, color=INK2, lw=2))
     ax = fig.add_axes([0.05, 0.18, 0.9, 0.26])
     ax.bar(range(64), h, color=BLUE)
     ax.set_xlim(-1, 64)
@@ -322,38 +333,60 @@ def s08_heads(mv, acts, net, owner):
     ax.set_yticks([])
     mv.add(fig, "08_heads", 4.0)
 
-    probs, owner_score = acts["count_probs"], acts["owner"]
+    scores, probs = acts["count_scores"], acts["count_probs"]
     best = int(np.argmax(probs))
-    fig = frame("8. Two answers",
-                f"Softmax turns 7 scores into probabilities that add to 1. The owner check compares the "
-                f"description with {owner}'s average hand for that count.")
-    ax = fig.add_axes([0.11, 0.2, 0.38, 0.6])
     names = ["no hand", "0", "1", "2", "3", "4", "5"]
-    ax.barh(range(7), probs, color=[BLUE if i == best else LINE for i in range(7)])
-    ax.set_yticks(range(7), names)
-    ax.invert_yaxis()
-    ax.set_xlim(0, 1)
-    ax.set_title(f"how many fingers?  '{names[best]}' at {probs[best]:.2f}", fontsize=15, loc="left")
-    ax2 = fig.add_axes([0.56, 0.45, 0.38, 0.12])
-    t = LP.owner_threshold(net.meta, load_settings())     # the threshold the safe actually uses
-    ax2.barh([0], [owner_score], color=GREEN if owner_score >= t else ORANGE)
-    ax2.axvline(t, color=INK, ls="--")
-    ax2.set_xlim(0, 1)
-    ax2.set_yticks([])
-    ax2.set_title(f"is it {owner}'s hand?  {owner_score:.2f} (threshold {t:.2f})", fontsize=15, loc="left")
+    colours = [BLUE if i == best else "#b9b8b2" for i in range(7)]
+    fig = frame("8. Softmax: the answer",
+                "A last layer turns the 64 numbers into 7 scores, one per answer. Softmax turns the scores into "
+                "probabilities that add up to 1.")
+    for vals, rect, title in [(scores, [0.1, 0.3, 0.3, 0.5], "7 scores"),
+                              (probs, [0.63, 0.3, 0.3, 0.5], f"probabilities: '{names[best]}' at {probs[best]:.1%}")]:
+        ax = fig.add_axes(rect)
+        ax.barh(range(7), vals, color=colours)
+        ax.set_yticks(range(7), names)
+        ax.invert_yaxis()
+        ax.set_title(title, fontsize=15, loc="left")
+        if vals is probs:
+            ax.set_xlim(0, 1)
+        else:
+            ax.axvline(0, color=INK2, lw=1)
+    arrow(fig, 0.44, 0.54, 0.55, "softmax")
+    fig.text(0.035, 0.17, f"(An optional \"is it {owner.title()}'s hand?\" check reads the same 64 numbers. "
+             "It's switched off: anyone with the code can open the safe.)", fontsize=12, color=INK2)
     mv.add(fig, "08_heads", 4.5)
 
 
-def s09_training(mv, snapshots, n_weights):
+def _augmented(photo, n, seed=7):
+    """n random versions of the photo, made by train.py's own augment()."""
+    with plt.rc_context():              # train.py restyles matplotlib when it's imported
+        import train
+    rng = np.random.default_rng(seed)
+    return [train.augment(photo, rng) for _ in range(n)]
+
+
+def s09_training(mv, snapshots, n_weights, photo, results):
     if snapshots is None:
         return
+    by = results.get("photos_by_person", {})
+    who = ", ".join(f"{n:,} of {p.title()}'s" for p, n in sorted(by.items(), key=lambda kv: (kv[0] != results.get("owner"), kv[0])))
+    fig = frame("9. Training: where the weights come from",
+                f"{results.get('photos', sum(by.values())):,} photos ({who}). Every pass, each one comes back a "
+                "new random way: spun, shifted, scaled, flipped, brighter or darker.")
+    image(fig, [0.04, 0.2, 0.3, 0.6], photo, "gray", 0, 255, "one of my photos")
+    arrow(fig, 0.36, 0.44, 0.5, "random")
+    for n, img in enumerate(_augmented(photo, 6)):
+        r, c = divmod(n, 3)
+        image(fig, [0.47 + c * 0.17, 0.51 - r * 0.31, 0.16, 0.28], img, "gray", 0, 255)
+    mv.add(fig, "09_training", 4.0)
+
     filt, loss = snapshots["filters"], snapshots["train_loss"]
     epochs = sorted(set([0, 1, 2, 3, 5, 8, 12, 18, len(filt) - 1]) & set(range(len(filt))))
     lim = float(np.abs(filt).max())
     for e in epochs:
-        fig = frame("9. Training: how the filters got their weights",
-                    f"Each pass over the photos, wrong answers give a loss, and backpropagation nudges all "
-                    f"{n_weights:,} weights a little downhill, like the V-fit but at scale.")
+        fig = frame("9. Training: where the weights come from",
+                    f"Each pass, wrong answers make a loss. Backpropagation finds which way to nudge all "
+                    f"{n_weights:,} weights, and gradient descent takes a small step downhill: the V-fit, scaled up.")
         for k in range(filt.shape[1]):
             numbers(fig, [0.04 + k * 0.118, 0.56, 0.1, 0.2], filt[e, k, 0], "RdBu_r", -lim, lim, "{:.1f}",
                     f"filter {k + 1}", fontsize=8)
@@ -369,52 +402,74 @@ def s09_training(mv, snapshots, n_weights):
         mv.add(fig, "09_training", 1.2 if e in (0, epochs[-1]) else STEP * 2)
 
 
-def s10_rules(mv):
-    for state, caption, note in [("idle", "Walk up and press the button: the LEDs light up.", "asleep"),
-                                 ("locked", "Walk up and press the button: the LEDs light up.", "awake: 0 of 3 digits")]:
-        fig = frame("10. The safe's rules", caption)
-        led(fig, [0.3, 0.3, 0.4, 0.4], leds.render({"state": state, "entered": 0, "code_len": 3,
-                                                    "hold": 0, "need_clear": True}), note)
-        mv.add(fig, "10_rules", 1.2)
-    times = np.round(np.arange(0, 1.21, 0.1), 2)
-    prob = np.clip(0.2 + 3.5 * times, 0, 0.94)            # an illustration, not a recording
-    for n, t in enumerate(times):
-        held = max(0.0, t - 0.2)
-        accepted = held >= LP.HOLD_S
-        status = {"state": "locked", "reading": "3" if prob[n] >= LP.CONF else None, "hold": min(1, held / LP.HOLD_S),
-                  "entered": 2 if accepted else 1, "code_len": 3, "need_clear": accepted}
-        fig = frame("10. The safe's rules",
-                    "A digit counts after 0.8 s at 80%+. Then the hand leaves the mat before the next one.")
-        ax = fig.add_axes([0.06, 0.2, 0.5, 0.6])
-        ax.plot(times[:n + 1], prob[:n + 1], color=BLUE, lw=3)
-        ax.axhline(LP.CONF, color=INK2, ls="--")
-        ax.text(0.01, LP.CONF + 0.02, "80%", color=INK2)
-        ax.set_xlim(0, 1.25)
-        ax.set_ylim(0, 1)
-        ax.set_xlabel("seconds since the hand arrived")
-        ax.set_title("probability of '3' (illustration)", fontsize=14, loc="left")
-        led(fig, [0.62, 0.35, 0.33, 0.3], leds.render(status), "the safe's LED matrix")
-        fig.text(0.62, 0.25, "digit accepted" if accepted else f"holding... {held:.1f} / {LP.HOLD_S} s",
-                 fontsize=18, weight="bold", color=GREEN if accepted else INK)
-        mv.add(fig, "10_rules", STEP if not accepted else 1.5)
-        if accepted:
-            break
-    status = {"state": "locked", "reading": None, "hold": 0, "entered": 3, "code_len": 3, "need_clear": True}
-    lockout = float(load_settings().get("lockout_s", LP.LOCKOUT_S))
-    fig = frame("10. The safe's rules", f"The right 3 digits open it. Three refused codes in a row lock it "
-                f"for {lockout:g} s.")
-    led(fig, [0.3, 0.3, 0.4, 0.4], leds.render(status), "3 of 3 digits in")
-    mv.add(fig, "10_rules", 1.6)
-    fig = frame("10. The safe's rules", "Open. (The duress code opens it exactly the same way, "
-                "and silently sends an alert with a photo.)")
-    led(fig, [0.3, 0.3, 0.4, 0.4], leds.render({"state": "open"}), "open")
+def s10_rules(mv, conf, fps, lockout, open_s):
+    title, pct = "10. The safe's rules", f"{conf:.0%}"
+    fig = frame(title, f"About {fps:.0f} times a second on the UNO Q. The network only says what it sees; "
+                "the rules decide what happens.")
+    boxes = [fig.text(0.13 + n * 0.245, 0.5, step, ha="center", va="center", fontsize=18, linespacing=1.4,
+                      bbox=dict(boxstyle="round,pad=0.7", fc="white", ec=BLUE if n == 2 else INK2, lw=2))
+             for n, step in enumerate(["camera\nframe", "network:\n7 probabilities", "the rules",
+                                       "LEDs, latch,\nalerts"])]
+    fig.canvas.draw()                   # so the boxes know their size
+    edges = [fig.transFigure.inverted().transform(b.get_bbox_patch().get_window_extent())[:, 0] for b in boxes]
+    for (_, right), (left, _) in zip(edges, edges[1:]):
+        arrow(fig, right + 0.012, left - 0.012, 0.5)
     mv.add(fig, "10_rules", 3.0)
 
+    def show(caption, arr, note, seconds):
+        fig = frame(title, caption)
+        led(fig, [0.3, 0.3, 0.4, 0.4], arr, note)
+        mv.add(fig, "10_rules", seconds)
 
-def s11_end(mv, owner):
+    show("Asleep: the LEDs stay dark until someone presses the button.", leds.render({"state": "idle"}),
+         "asleep", 1.5)
+    show("Press the button: it wakes up for one code. A faint dot for each digit, and a padlock.",
+         leds.render({"state": "locked", "reading": "none", "entered": 0, "code_len": 3, "hold": 0}),
+         "awake: 0 of 3 digits", 2.0)
+    times = np.round(np.arange(0, 1.31, 0.1), 2)
+    prob = np.clip(0.15 + 2.5 * times, 0, 0.95)          # an illustration, not a recording
+    t_sure = float(times[np.argmax(prob >= conf)])       # when it first gets sure enough
+    for n, t in enumerate(times):
+        sure = prob[n] >= conf
+        held = t - t_sure if sure else 0.0
+        accepted = sure and held + LP.EPS >= LP.HOLD_S
+        status = {"state": "locked", "reading": "3" if sure else None, "hold": min(1, held / LP.HOLD_S),
+                  "entered": 1 if accepted else 0, "code_len": 3, "need_clear": accepted}
+        fig = frame(title, f"A digit counts once the network has been at least {pct} sure of the same answer "
+                    f"for {LP.HOLD_S:g} s. The bar under the digit fills while you hold it.")
+        ax = fig.add_axes([0.06, 0.26, 0.5, 0.55])
+        ax.plot(times[:n + 1], prob[:n + 1], color=BLUE, lw=3)
+        ax.axhline(conf, color=INK2, ls="--")
+        ax.text(0.01, conf + 0.02, pct, color=INK2)
+        ax.set_xlim(0, times[-1] + 0.05)
+        ax.set_ylim(0, 1)
+        ax.set_xlabel("seconds since the hand arrived")
+        ax.set_title("probability of '3' (a made-up example)", fontsize=14, loc="left")
+        led(fig, [0.62, 0.35, 0.33, 0.3], leds.render(status), "the safe's LED matrix")
+        fig.text(0.62, 0.25, "digit accepted" if accepted else
+                 (f"holding... {held:.1f} / {LP.HOLD_S:g} s" if sure else "not sure yet"),
+                 fontsize=18, weight="bold", color=GREEN if accepted else INK)
+        mv.add(fig, "10_rules", 1.5 if accepted else STEP)
+        if accepted:
+            break
+    show("Then the hand leaves the mat (the digit dims) before the next one can start.",
+         leds.render({"state": "locked", "reading": "none", "entered": 1, "code_len": 3, "hold": 0,
+                      "need_clear": True}), "1 of 3 digits in", 2.0)
+    show(f"After the third digit, the right code swings the latch open. It locks again after {open_s:g} s, "
+         "or straight away at a button press.", leds.render({"state": "open"}), "open", 2.5)
+    show("A wrong code gets an X, and the safe goes back to sleep. It never says which digit was wrong.",
+         leds.screen("wrong"), "wrong code", 2.0)
+    show(f"Three wrong codes in a row lock it for {lockout:g} s, counting down, and send an alert with a "
+         "photo of the hand.", leds.lockout(lockout), "lockout", 2.5)
+    show("The duress code opens it exactly the same way, but silently sends an alert with a photo.",
+         leds.render({"state": "open"}), "duress code: looks just like open", 2.5)
+
+
+def s11_end(mv, n_weights, fps):
     fig = frame("")
-    fig.text(0.5, 0.56, "One network, two answers", ha="center", fontsize=40, weight="bold")
-    fig.text(0.5, 0.45, f"how many fingers, and whether it's {owner}'s hand", ha="center", fontsize=20, color=INK2)
+    fig.text(0.5, 0.56, f"{n_weights:,} weights, trained from scratch", ha="center", fontsize=34, weight="bold")
+    fig.text(0.5, 0.45, f"counting fingers about {fps:.0f} times a second on an Arduino UNO Q", ha="center",
+             fontsize=20, color=INK2)
     mv.add(fig, "11_end", 3.0)
 
 
@@ -436,10 +491,12 @@ def write_video(items, path):
         lines = []
         for png, secs in items:
             lines += [f"file '{png}'", f"duration {secs:.3f}"]
-        lines.append(f"file '{items[-1][0]}'")           # the concat demuxer needs the last file twice
+        lines.append(f"file '{items[-1][0]}'")           # older ffmpegs need the last file twice...
         lst.write_text("\n".join(lines) + "\n")
+        total = sum(secs for _, secs in items)          # ...newer ones then show it twice as long, so cut at the total
         subprocess.run([exe, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
-                        "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-crf", "18", str(path)], check=True)
+                        "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-crf", "18", "-t", f"{total:.3f}",
+                        str(path)], check=True)
         lst.unlink()
         return
     import cv2
@@ -454,12 +511,42 @@ def write_video(items, path):
 
 # ---- Main ---------------------------------------------------------------------------------------
 
-def pick_photo(owner):
-    for label in ("3", "4", "2", "5", "1"):
-        files = sorted((DATA_DIR / owner).glob(f"*/{label}/*.png"))
-        if files:
-            return files[len(files) // 2]
-    return None
+def narration_seconds(path=NARRATION, wpm=WPM):
+    """{"03": seconds, ...}: how long each "## NN" block of narration.md takes to
+    say, plus a breath. Lines starting with ">" are notes, not said. A number
+    counts one word per digit ("4,096" is "four thousand and ninety-six")."""
+    if not path.exists():
+        return {}
+    words, scene = {}, None
+    for line in path.read_text().splitlines():
+        if line.startswith("#"):
+            m = re.match(r"##\s+(\d\d)\b", line)
+            scene = m.group(1) if m else None
+        elif scene and not line.lstrip().startswith(">"):
+            words[scene] = words.get(scene, 0) + sum(
+                max(1, len(re.sub(r"\D", "", w))) if re.search(r"\d", w) else 1
+                for w in line.split() if re.search(r"\w", w))
+    return {s: n / wpm * 60 + BREATH_S for s, n in words.items() if n}
+
+
+def _json(path):
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def pick_photo(owner, net=None, label="3"):
+    """A photo of `label` fingers from the owner's newest session (the one at the
+    safe): the one the trained network is surest about, else the middle one."""
+    import cv2
+    files = sorted((DATA_DIR / owner).glob(f"*/{label}/*.png"))
+    if not files:
+        return None
+    stamp = lambda f: int(m.group(1)) if (m := re.match(r"(\d+)", f.stem)) else 0     # noqa: E731
+    newest = max(files, key=stamp).parent.parent
+    files = [f for f in files if f.parent.parent == newest]
+    if net is None:
+        return files[len(files) // 2]
+    li = FN.COUNT_LABELS.index(label)
+    return max(files, key=lambda f: net.forward(FN.net_input(cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)))[0][li])
 
 
 def main():
@@ -473,47 +560,63 @@ def main():
     args = ap.parse_args()
 
     import cv2
-    path = args.photo or pick_photo(args.owner)
+    trained = not args.untrained and args.model.exists()
+    if not trained and not args.untrained:
+        print(f"No trained model at {args.model}: using random weights.")
+    net = FN.FingerNet(args.model) if trained else FN.FingerNet(weights=FN.random_weights())
+    path = args.photo or pick_photo(args.owner, net if trained else None)
     if path is None:
         sys.exit("No photo: pass --photo, or take some with capture.py first.")
     photo = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if photo.shape != (FN.SAVE_SIZE, FN.SAVE_SIZE):
         photo = np.clip(np.rint(FN.shrink(photo, FN.SAVE_SIZE)), 0, 255).astype(np.uint8)
-    if args.untrained or not args.model.exists():
-        if not args.untrained:
-            print(f"No trained model at {args.model}: using random weights.")
-        net = FN.FingerNet(weights=FN.random_weights())
-    else:
-        net = FN.FingerNet(args.model)
     x = FN.net_input(photo)
     _, _, acts = net.forward(x, keep=True)
     w = net.w
-    k = int(np.argmax([np.abs(acts["conv1"][i]).mean() for i in range(8)]))     # the busiest filter
-    snapshots = dict(np.load(args.snapshots)) if args.snapshots.exists() and not args.untrained else None
+    # The filter followed through scenes 3-6: the most edge-like one. Its weights nearly cancel out, so it
+    # answers to changes in brightness (an edge of the hand), not to brightness itself.
+    w1 = w["conv1_w"][:, 0]
+    k = int(np.argmin(np.abs(w1.sum(axis=(1, 2))) / np.abs(w1).sum(axis=(1, 2))))
+    snapshots = dict(np.load(args.snapshots)) if args.snapshots.exists() and trained else None
     n_weights = int(sum(v.size for name, v in w.items() if name.split("_")[0] in
                         ("conv1", "conv2", "conv3", "fc", "count", "owner")))
+    settings, results, bench = load_settings(), _json(FIG_DIR / "results.json"), _json(FIG_DIR / "bench.json")
+    conf = settings.get("conf")             # as lock_policy.make_policy() picks it
+    conf = float(conf) if conf is not None else float(net.meta.get("count_conf", LP.CONF))
+    fps = float(bench.get("board", {}).get("fps", 15))
 
     mv = Movie(args.out)
-    s01_title(mv, args.owner)
+    s01_title(mv)
     s02_pixels(mv, photo, FN.shrink(photo, FN.NET_SIZE))
     s03_convolution(mv, x, acts, w, k)
     s04_all_filters(mv, acts, w)
     s05_relu(mv, acts, k)
     s06_pooling(mv, acts, k)
     s07_deeper(mv, acts)
-    s08_heads(mv, acts, net, args.owner)
-    s09_training(mv, snapshots, n_weights)
-    s10_rules(mv)
-    s11_end(mv, args.owner)
+    s08_heads(mv, acts, args.owner)
+    s09_training(mv, snapshots, n_weights, photo, results)
+    s10_rules(mv, conf, fps, float(settings.get("lockout_s", LP.LOCKOUT_S)),
+              float(settings.get("open_s", LP.OPEN_S)))
+    s11_end(mv, n_weights, fps)
 
+    # Each scene lasts as long as its narration takes to say: every frame stretched (or squeezed) alike.
     scenes = list(dict.fromkeys(s for s, _, _ in mv.items))
+    said = narration_seconds()
+    for s in scenes:
+        if said.get(s[:2]):
+            scale = said[s[:2]] / sum(secs for sc, _, secs in mv.items if sc == s)
+            mv.items = [(sc, p, secs * scale if sc == s else secs) for sc, p, secs in mv.items]
     for s in scenes:
         write_video([(p, secs) for sc, p, secs in mv.items if sc == s], args.out / f"scene_{s}.mp4")
     write_video([(p, secs) for _, p, secs in mv.items], args.out / "infallible_safe.mp4")
     total = sum(secs for _, _, secs in mv.items)
-    summary = {s: round(sum(secs for sc, _, secs in mv.items if sc == s), 1) for s in scenes}
-    print(json.dumps({"photo": str(path), "frames": len(mv.items), "seconds": round(total, 1), "scenes": summary},
-                     indent=2))
+    print(json.dumps({"photo": str(path), "frames": len(mv.items), "seconds": round(total, 1)}, indent=2))
+    print("Scenes" + (f" (timed to narration.md at {WPM} words a minute):" if said else ":"))
+    t = 0.0
+    for s in scenes:
+        secs = sum(secs for sc, _, secs in mv.items if sc == s)
+        print(f"  {s:18s} {int(t // 60)}:{t % 60:04.1f}  {secs:5.1f} s")
+        t += secs
     print(f"Video: {args.out / 'infallible_safe.mp4'} (+ one per scene). Frames in {mv.frames_dir}")
 
 

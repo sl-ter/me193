@@ -337,6 +337,25 @@ def test_pressing_mid_code_starts_it_over():
     assert "open" in kinds(ev)
 
 
+def test_confidence_bar_comes_from_settings_then_the_model():
+    meta = {"count_conf": 0.8}
+    assert LP.make_policy(CODE, DURESS, meta, {"conf": 0.6}).conf == 0.6
+    assert LP.make_policy(CODE, DURESS, meta, {}).conf == 0.8
+
+
+def test_a_lower_bar_counts_a_less_sure_digit():
+    seen = {}
+    for bar in (0.8, 0.6):
+        p = LP.LockPolicy(CODE, DURESS, conf=bar)
+        ev, t = [], 0.0
+        for secs, label, conf in [(GAP, NONE, 0.95), (HOLD, d(3), 0.7)]:      # a 3 held at 70% sure
+            for _ in range(int(round(secs * 10))):
+                ev += p.update(t, probs(label, conf), 0.95)
+                t += 0.1
+        seen[bar] = digits(ev)
+    assert seen == {0.8: [], 0.6: [3]}
+
+
 def test_lockout_length_comes_from_settings():
     p = LP.make_policy(CODE, DURESS, {}, {"lockout_s": 10})
     ev, t = run(p, enter((0, 0, 0, 0)) * 3)
